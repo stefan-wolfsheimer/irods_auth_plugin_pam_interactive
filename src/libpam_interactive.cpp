@@ -11,9 +11,7 @@
 #include "authCheck.h"
 #include "rsAuthRequest.hpp"
 #include "rsAuthCheck.hpp"
-#include "miscServerFunct.hpp"
 #include "authPluginRequest.h"
-#include "icatHighLevelRoutines.hpp"
 #include "irods_generic_auth_object.hpp"
 
 // =-=-=-=-=-=-=-
