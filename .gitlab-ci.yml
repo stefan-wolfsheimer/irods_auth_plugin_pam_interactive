@@ -75,6 +75,7 @@ publish__4.2.7:
   tags:
     - irods
   script: |
+    source .variables
     ci/publish_package.sh
 
 publish__4.2.8:
@@ -84,4 +85,5 @@ publish__4.2.8:
   tags:
     - irods
   script: |
+    source .variables
     ci/publish_package.sh
