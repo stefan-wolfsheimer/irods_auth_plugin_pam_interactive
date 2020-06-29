@@ -1,0 +1,87 @@
+variables:
+  GIT_STRATEGY: clone
+  GIT_SUBMODULE_STRATEGY: recursive
+stages:
+  - pull
+  - make
+  - publish
+
+before_script:
+  - rm -f .variables
+  - touch .variables
+  - echo $CI_REGISTRY_PASSWORD | docker login -u $CI_REGISTRY_USER --password-stdin  $CI_REGISTRY;
+  - echo export DOCKER_IMAGE=git.ia.surfsara.nl:5050/data-management-services/irods-ci-server/centos7___IRODS_VERSION__:latest >> .variables
+  - echo export VERSION=0.1.0 >> .variables
+  - echo export MODULE_VERSION=0.1.0 >> .variables
+  - echo export IRODS_VERSIONS=4.2.7,4.2.8 >> .variables
+  - echo export PACKAGE_NAME=irods_auth_plugin_pam_interactive >> .variables
+  - echo export REPO=DMS-RPM-Testing,DMS-RPM-Testing-Public >> .variables
+
+# #############################################
+# make
+# ############################################# 
+docker_pull_4.2.7:
+  stage: pull
+  variables:
+    IRODS_VERSION: 4.2.7
+  tags:
+    - irods
+  script: |
+    source .variables
+    ci/pull_image.sh
+
+docker_pull_4.2.8:
+  stage: pull
+  variables:
+    IRODS_VERSION: 4.2.8
+  tags:
+    - irods
+  script: |
+    source .variables
+    ci/pull_image.sh
+
+# #############################################
+# make
+# ############################################# 
+make_4.2.7:
+  stage: make
+  variables:
+    IRODS_VERSION: 4.2.7
+  tags:
+    - irods
+  script: |
+    source .variables
+    ci/build_package.sh
+
+make_4.2.8:
+  stage: make
+  variables:
+    IRODS_VERSION: 4.2.8
+    # todo: IRD-1112
+    BUILD_VERSION: "4_2_7"
+  tags:
+    - irods
+  script: |
+    source .variables
+    ci/build_package.sh
+
+# #############################################
+# publish
+# ############################################# 
+publish__4.2.7:
+  stage: publish
+  variables:
+    IRODS_VERSION: 4.2.7
+  tags:
+    - irods
+  script: |
+    ci/publish_package.sh
+
+publish__4.2.8:
+  stage: publish
+  variables:
+    IRODS_VERSION: 4.2.8
+  tags:
+    - irods
+  script: |
+    ci/publish_package.sh
