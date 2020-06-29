@@ -17,8 +17,8 @@ PAM auth plugin for iRODS
 make
 
 %install
-install -m 755 libpam_interactive_client.so 
-install -m 755 libpam_interactive_server.so 
+install -m 755 libpam_interactive_client.so %{buildroot}/usr/lib/irods/plugins/auth/libpam_interactive_client.so
+install -m 755 libpam_interactive_server.so %{buildroot}/usr/lib/irods/plugins/auth/libpam_interactive_server.so
 
 %files
 /usr/lib/irods/plugins/auth/libpam_interactive_client.so
