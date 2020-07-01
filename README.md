@@ -38,21 +38,36 @@ enabled=1
 gpgcheck=0
 priority=90
 #Optional - if you have GPG signing keys installed, use the below flags to verify the repository metadata signature:
-#gpgkey=artie.ia.surfsara.nl/artifactory/DMS-RPM-Testing-Public/7/irods-4.2.8/master/repomd.xml.key
+#gpgkey=artie.ia.surfsara.nl/artifactory/DMS-RPM-Testing-Public/7/irods-4.2.7/master/repomd.xml.key
 #repo_gpgcheck=1
 ```
 
-4. Update icommands
+4. clear cache
 
 ```
-update irods-icommands
+yum clean all
 ```
 
-5. Install additional packages
+5. Update icommands
+
+```
+yum update irods-icommands
+```
+
+6. Install additional packages
 
 ```
 yum install python-pam-module \
-            pam-handshake \
-            irods_auth_plugin_pam_interactive
+            pam-handshake
 ```
+
+install module (with workaround):
+
+```
+rpm --nodeps -i https://artie.ia.surfsara.nl/artifactory/DMS-RPM-Testing-Public/Centos/7/irods-4.2.8/master/x86_64/Packages/irods_auth_plugin_pam_interactive-0.1.0-42781.x86_64.rpm
+```
+(this is a workaround for yum install irods_auth_plugin_pam_interactive)
+
+
+
 
