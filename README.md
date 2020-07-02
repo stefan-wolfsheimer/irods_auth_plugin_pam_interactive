@@ -64,7 +64,7 @@ yum install python-pam-module \
 install module (with workaround):
 
 ```
-rpm --nodeps -i https://artie.ia.surfsara.nl/artifactory/DMS-RPM-Testing-Public/Centos/7/irods-4.2.8/master/x86_64/Packages/irods_auth_plugin_pam_interactive-0.1.0-42781.x86_64.rpm
+rpm --nodeps -i https://artie.ia.surfsara.nl/artifactory/DMS-RPM-Testing-Public/Centos/7/irods-4.2.8/master/x86_64/Packages/irods_auth_plugin_pam_interactive-0.1.0-<LATEST>.x86_64.rpm
 ```
 (this is a workaround for yum install irods_auth_plugin_pam_interactive)
 
