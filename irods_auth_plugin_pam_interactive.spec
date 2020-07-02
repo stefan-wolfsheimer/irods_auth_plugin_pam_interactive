@@ -5,6 +5,7 @@ Summary:        PAM auth plugin for iRODS
 
 License:        GPLv3+
 Source0:        %{packagename}-%{version}.tar.gz
+%define debug_package %{nil}
 
 %description
 PAM auth plugin for iRODS

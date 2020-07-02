@@ -43,7 +43,6 @@ add_compile_options(-Werror)
 add_compile_options(-Wno-unused-parameter)
 add_compile_options(-Wno-unused-function)
 add_compile_options(-std=c++17)
-add_compile_options(-g)
 
 include_directories(
   ${IRODS_EXTERNALS_FULLPATH_CLANG}/include/c++/v1
