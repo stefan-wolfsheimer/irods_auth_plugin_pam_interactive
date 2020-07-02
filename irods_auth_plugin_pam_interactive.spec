@@ -13,6 +13,7 @@ PAM auth plugin for iRODS
 %setup -q
 
 %build
+/opt/irods-externals/cmake3.11.4-0/bin/cmake -D IRODS_VERSION=${IRODS_VERSION} .
 make
 
 %install
