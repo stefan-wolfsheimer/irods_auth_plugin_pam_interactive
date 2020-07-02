@@ -15,7 +15,7 @@ docker rm ${CONTAINER_NAME} || true
 set -x
 
 
-tmp_dir=$(mktemp -d -t ci-${CONTAINER_NAME})
+tmp_dir=$(mktemp -d -t ci-XXXXXXXXXX-${CONTAINER_NAME})
 
 cp -R . ${tmp_dir}
 
