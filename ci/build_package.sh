@@ -20,7 +20,7 @@ tmp_dir=$(mktemp -d -t ci-XXXXXXXXXX-${CONTAINER_NAME})
 cp -R . ${tmp_dir}
 
 docker run --rm -w="/build" -v${tmp_dir}:/build --entrypoint "" ${IMAGE} \
-       bash /opt/irods-externals/cmake3.11.4-0/bin/cmake -D IRODS_VERSION=${IRODS_VERSION} .
+       /opt/irods-externals/cmake3.11.4-0/bin/cmake -D IRODS_VERSION=${IRODS_VERSION} .
 
 docker run --rm -v${tmp_dir}:/build --entrypoint "" ${IMAGE} \
        chmod -R a+rw /build 
