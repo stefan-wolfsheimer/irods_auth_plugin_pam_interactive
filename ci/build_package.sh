@@ -14,7 +14,7 @@ set +x
 docker rm ${CONTAINER_NAME} || true
 set -x
 
-docker run --name ${CONTAINER_NAME} -u rpmbuild -v$( pwd):/build --entrypoint "" ${IMAGE} -w="/build" \
+docker run --name ${CONTAINER_NAME} -u rpmbuild -w="/build" -v$( pwd):/build --entrypoint "" ${IMAGE} \
        /opt/irods-externals/cmake3.11.4-0/bin/cmake -DIRODS_$( echo 4.2.8 | tr . _ ) .
        
 docker run --name ${CONTAINER_NAME} -u rpmbuild -v$( pwd):/build --entrypoint "" ${IMAGE} \
