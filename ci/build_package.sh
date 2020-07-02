@@ -15,7 +15,7 @@ docker rm ${CONTAINER_NAME} || true
 set -x
 
 docker run --name ${CONTAINER_NAME} -u rpmbuild -w="/build" -v$( pwd):/build --entrypoint "" ${IMAGE} \
-       /opt/irods-externals/cmake3.11.4-0/bin/cmake -D IRODS_VERSION=${IRODS_VERSION}
+       /opt/irods-externals/cmake3.11.4-0/bin/cmake -D IRODS_VERSION=${IRODS_VERSION} .
        
 docker run --name ${CONTAINER_NAME} -u rpmbuild -v$( pwd):/build --entrypoint "" ${IMAGE} \
        /home/rpmbuild/build_rpm.sh \
