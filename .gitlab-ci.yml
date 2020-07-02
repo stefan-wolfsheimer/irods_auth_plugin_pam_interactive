@@ -57,8 +57,6 @@ make_4.2.8:
   stage: make
   variables:
     IRODS_VERSION: 4.2.8
-    # todo: IRD-1112
-    BUILD_VERSION: "4_2_7"
   tags:
     - irods
   script: |
