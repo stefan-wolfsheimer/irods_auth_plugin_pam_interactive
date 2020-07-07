@@ -152,7 +152,7 @@ set_property(
   run_test
   PROPERTY
   CXX_STANDARD
-  ${IRODS_CXX_STANDARD}
+  14
   )
 
 target_link_libraries(run_test
