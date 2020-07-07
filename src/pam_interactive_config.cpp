@@ -3,14 +3,159 @@
 #include <fstream>
 #include <json.hpp>
 #include <termios.h>
-#include "getRodsEnv.h"
 #include "pam_interactive_config.h"
+#include "getRodsEnv.h"
 #include "authenticate.h"
 #include "obf.h"
 #include "rodsErrorTable.h"
 
 //@todo make configurable and share between client and server
 #define OBF_KEY "1234567890"
+
+inline static PamHandshake::Message::State parseState(const std::string & s)
+{
+  using State = PamHandshake::Message::State;
+  if(s == "RUNNING")
+  {
+    return State::Running;
+  }
+  else if(s == "READY")
+  {
+    return State::Ready;
+  }
+  else if(s == "RUNNING")
+  {
+    return State::Running;
+  }
+  else if(s == "WAITING")
+  {
+    return State::Waiting;
+  }
+  else if(s == "WAITING_PW")
+  {
+    return State::WaitingPw;
+  }
+  else if(s == "ANSWER")
+  {
+    return State::Answer;
+  }
+  else if(s == "NEXT")
+  {
+    return State::Next;
+  }
+  else if(s == "ERROR")
+  {
+    return State::Error;
+  }
+  else if(s == "TIMEOUT")
+  {
+    return State::Timeout;
+  }
+  else if(s == "STATE_AUTHENTICATED")
+  {
+    return State::Authenticated;
+  }
+  else if(s == "NOT_AUTHENTICATED")
+  {
+    return State::NotAuthenticated;
+  }
+  else
+  {
+    throw PamHandshake::StateError(s);
+  }
+}
+
+PamHandshake::Message::Message(const std::string & msg)
+{
+  irods::error ret = irods::parse_escaped_kvp_string(msg, kvp);
+  if(!ret.ok())
+  {
+    throw ParseError(msg);
+  }
+  auto itr = kvp.find("CODE");
+  if(itr == kvp.end())
+  {
+    throw HttpError();
+  }
+  if(itr->second != "200" && itr->second != "401" && itr->second != "202")
+  {
+    throw HttpError(itr->second);
+  }
+  itr = kvp.find("STATE");
+  if(itr == kvp.end())
+  {
+    throw StateError();
+  }
+  state = ::parseState(itr->second);
+  itr = kvp.find("MESSAGE");
+  if(itr != kvp.end())
+  {
+    message = itr->second;
+  }
+  if(message.empty() || message[0] != '{')
+  {
+    // simple case: message is a simple string
+    has_echo = true;
+    update_key = message;
+    answer_mode = AnswerMode::Always;
+  }
+  else
+  {
+    parseJson();
+  }
+}
+
+void PamHandshake::Message::parseJson()
+{
+  auto obj = nlohmann::json::parse(message);
+  message = "";
+  answer_mode = AnswerMode::Always;
+  for(auto item : obj.items() )
+  {
+    const std::string & key(item.key());
+    if(key == "echo")
+    {
+      message = item.value().get<std::string>();
+      has_echo = true;
+    }
+    else if(key == "patch")
+    {
+      cookies = item.value();
+    }
+    else if(key == "ask")
+    {
+      std::string ask(item.value().get<std::string>());
+      if(ask == "always")
+      {
+        answer_mode = AnswerMode::Always;
+      }
+      else if(ask == "never")
+      {
+        answer_mode = AnswerMode::Never;
+      }
+      else if(ask == "when invalid")
+      {
+        answer_mode = AnswerMode::WhenInvalid;
+      }
+      else
+      {
+        throw InvalidKeyError(ask);
+      }
+    }
+    else if(key == "update")
+    {
+      update_key = item.value().get<std::string>();
+    }
+    else if(key == "valid_until")
+    {
+      //@todo
+    }
+    else
+    {
+      throw InvalidKeyError(item.key());
+    }
+  }
+}
 
 static std::string extract_default_value(const std::string & message,
                                          nlohmann::json & j)
@@ -49,6 +194,29 @@ static std::string extract_default_value(const std::string & message,
     }
   }
   return std::string("");
+}
+
+void PamHandshake::update_cookies(nlohmann::json & j,
+                                  const nlohmann::json & cookies)
+{
+  if(cookies.is_object())
+  {
+    for(auto item : cookies.items())
+    {
+      if(item.value().is_null())
+      {
+        j.erase(item.key());
+      }
+      else
+      {
+        j.merge_patch(nlohmann::json{{item.key(), item.value()}});
+      }
+    }
+  }
+  else
+  {
+    throw InvalidKeyError(std::string("expected object:") + cookies.dump());
+  }
 }
 
 std::string PamHandshake::pam_input(const std::string & message,
@@ -174,6 +342,12 @@ std::string PamHandshake::get_conversation_file()
   }
 }
 
+void PamHandshake::save_conversation(std::ostream & ost,
+                                     const nlohmann::json & json_conversation)
+{
+  ost << json_conversation;
+}
+
 void PamHandshake::save_conversation(const nlohmann::json & json_conversation, int VERBOSE_LEVEL)
 {
   std::string file_name(get_conversation_file());
@@ -181,13 +355,20 @@ void PamHandshake::save_conversation(const nlohmann::json & json_conversation, i
   std::ofstream file(file_name.c_str());
   if (file.is_open())
   {
-    file << json_conversation;
+    save_conversation(file, json_conversation);
     file.close();
   }
   else
   {
     throw std::runtime_error((std::string("cannot write to  file ") + file_name).c_str());
   }
+}
+
+nlohmann::json PamHandshake::load_conversation(std::istream & ist)
+{
+  nlohmann::json json_conversation;
+  ist >> json_conversation;
+  return json_conversation;
 }
 
 nlohmann::json PamHandshake::load_conversation(int VERBOSE_LEVEL)
@@ -198,7 +379,7 @@ nlohmann::json PamHandshake::load_conversation(int VERBOSE_LEVEL)
   std::ifstream file(file_name.c_str());
   if (file.is_open())
   {
-    file >> json_conversation;
+    nlohmann::json json_conversation(load_conversation(file));
     file.close();
     return json_conversation;
   }
