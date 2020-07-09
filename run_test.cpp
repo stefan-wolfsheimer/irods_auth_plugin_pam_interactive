@@ -173,6 +173,30 @@ TEST_CASE("Complex message with key", "[Message]")
   REQUIRE_FALSE(conv.isDirty());
 }
 
+TEST_CASE("Complex message with non-string values", "[Message]")
+{
+  Conversation conv("{\"b\":{\"value\": true}, \"i\":{\"value\": 1}}"_json);
+  std::map<std::string, std::string> fields({{"b", "true"}, {"i", "1"}});
+  for(auto & p : fields)
+  {
+    std::string msg_str(irods::escaped_kvp_string(irods::kvp_map_t{
+          {"CODE", "200"},
+          {"STATE", "WAITING"},
+          {"MESSAGE", std::string("{\"key\":\"") + p.first + std::string("\",\"ask\": \"entry\"}")}}));
+    Message m(msg_str);
+    REQUIRE(m.getKey().get<std::string>() == p.first);
+    REQUIRE(m.getState() == Message::State::Waiting);
+    REQUIRE(m.getResponseMode() == Message::ResponseMode::Entry);
+    REQUIRE(m.getPatch().is_null());
+    // user value never ask because Message::ResponseMode::Entry
+    std::stringstream ist;
+    std::stringstream ost;
+    REQUIRE(m.input(conv, true, ist, ost) == p.second);
+    REQUIRE(ost.str() == "");
+  }
+}
+
+
 TEST_CASE("Message with patch", "[Message]")
 {
   Conversation conv(nlohmann::json::object({
