@@ -159,7 +159,7 @@ def pam_sm_authenticate(pamh, flags, argv):
             pamh.conversation(pamh.Message(pamh.PAM_TEXT_INFO, imsg))
             # alternatively:
             # pamh.conversation(pamh.Message(pamh.PAM_TEXT_INFO, "number of logins: {0}".format(counter)))
-        return pamh.PAM_SUCCESS
+            return pamh.PAM_SUCCESS
     return pamh.PAM_AUTH_ERR
 ```
 
