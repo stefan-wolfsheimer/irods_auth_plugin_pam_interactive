@@ -585,14 +585,14 @@ std::pair<bool, std::string> PamHandshake::Message::extractDefaultValue(const st
       return std::make_pair(true, j[key].get<std::string>());
     }
     else if(j[key].is_object() &&
-            j[key].contains("value") &&
-            j[key]["value"].is_string())
+            j[key].contains("value"))
     {
+      std::string value(j[key]["value"].is_string() ? j[key]["value"].get<std::string>() : j[key]["value"].dump());
       if(j[key].contains("scrambled") &&
          j[key]["scrambled"].get<bool>())
       {
         //@todo length check!
-        std::string answer(j[key]["value"].get<std::string>());
+        std::string answer(value);
         if(answer.size() > MAX_PASSWORD_LEN + 9)
         {
           throw std::runtime_error("password too long");
@@ -607,7 +607,7 @@ std::pair<bool, std::string> PamHandshake::Message::extractDefaultValue(const st
       }
       else
       {
-        return std::make_pair(true, j[key]["value"].get<std::string>());
+        return std::make_pair(true, value);
       }
     }
     return std::make_pair(false, std::string(""));
