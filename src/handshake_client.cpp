@@ -379,8 +379,6 @@ CURLcode ReadWriteDataBuffer::init(CURL *curl) const
 
   {
     struct curl_slist *chunk = NULL;
-    std::cout << content_length_header << std::endl;
-    std::cout << "Buffer:" << buffer << ":" << buffer.size() << std::endl;
     chunk = curl_slist_append(chunk, content_length_header.c_str());
     chunk = curl_slist_append(chunk,"Expect:");
     res = curl_easy_setopt(curl, CURLOPT_HTTPHEADER, chunk);
@@ -398,8 +396,6 @@ std::size_t ReadWriteDataBuffer::read(void *ptr, size_t size, size_t nmemb, void
   size_t left = self->buffer.size() - self->uploaded;
   size_t max_chunk = size * nmemb;
   size_t retcode = left < max_chunk ? left : max_chunk;
-  std::cout << "left: " << left << " max chunk " << max_chunk << " uploaded " << self->uploaded << std::endl;
-  std::cout << "buffer:" << self->buffer.c_str() << ":" << self->uploaded << ":" << retcode << std::endl;
   std::memcpy(ptr, self->buffer.c_str() + self->uploaded, retcode);
   self->uploaded += retcode;
   return retcode;
