@@ -1,4 +1,5 @@
 #include <string>
+#include <sstream>
 #include <iostream>
 #include <fstream>
 #include <json.hpp>
@@ -12,6 +13,157 @@
 //@todo make configurable and share between client and server
 #define OBF_KEY "1234567890"
 
+/////////////////////////////////////////////////////////////
+//
+// Conversation
+//
+/////////////////////////////////////////////////////////////
+PamHandshake::Conversation::Conversation()
+  : is_dirty(false), j("{}"_json)
+{
+}
+
+PamHandshake::Conversation::Conversation(const nlohmann::json & rhs)
+  : is_dirty(false), j(rhs)
+{
+}
+
+PamHandshake::Conversation::Conversation(nlohmann::json && rhs)
+  : is_dirty(false), j(std::move(rhs))
+{
+}
+
+void PamHandshake::Conversation::load(int VERBOSE_LEVEL)
+{
+  std::string file_name(getConversationFile());
+  PAM_CLIENT_LOG(PAMLOG_INFO, "LOAD  conversation: " << file_name);
+  std::ifstream file(file_name.c_str());
+  if (file.is_open())
+  {
+    load(file);
+    file.close();
+  }
+}
+
+void PamHandshake::Conversation::load(std::istream & ist)
+{
+  ist >> j;
+}
+
+void PamHandshake::Conversation::reset()
+{
+  j = "{}"_json;
+}
+
+void PamHandshake::Conversation::save(int VERBOSE_LEVEL, bool force)
+{
+  if(is_dirty || force)
+  {
+    std::string file_name(getConversationFile());
+    PAM_CLIENT_LOG(PAMLOG_INFO, "SAVE conversation: " << file_name);
+    std::ofstream file(file_name.c_str());
+    if (file.is_open())
+    {
+      file << j;
+      file.close();
+    }
+    else
+    {
+      throw std::runtime_error((std::string("cannot write to  file ") + file_name).c_str());
+    }
+  }
+  is_dirty = false;
+}
+
+std::string PamHandshake::Conversation::dump() const
+{
+  std::stringstream ss;
+  ss << j;
+  return ss.str();
+}
+
+std::tuple<bool, std::string> PamHandshake::Conversation::getValue(const std::string & key) const
+{
+  //@todo decode value
+  if(j.contains(key))
+  {
+    if(j[key].is_string())
+    {
+      return std::make_tuple(true, j[key].get<std::string>());
+    }
+    else if(j[key].is_object())
+    {
+      if(j[key].contains("value"))
+      {
+        return std::make_tuple(true, j[key]["value"].get<std::string>());
+      }
+    }
+  }
+  return std::make_tuple(false, "");
+}
+
+std::tuple<bool, std::string> PamHandshake::Conversation::getValidUntil(const std::string & key) const
+{
+  if(j.contains(key))
+  {
+    if(j[key].is_string())
+    {
+      return std::make_tuple(true, j[key].get<std::string>());
+    }
+    else if(j[key].is_object())
+    {
+      if(j[key].contains("valid_until"))
+      {
+        return std::make_tuple(true, j[key]["valid_until"].get<std::string>());
+      }
+    }
+  }
+  return std::make_tuple(false, "");
+}
+
+void PamHandshake::Conversation::setValue(const std::string & key,
+                                          const std::string & value,
+                                          const std::string & valid_until)
+{
+  if(valid_until.empty())
+  {
+    j[key] = nlohmann::json::object({
+        {"value", value},
+        {"scrambled", false}});
+  }
+  else
+  {
+    j[key] = nlohmann::json::object({
+        {"value", value},
+        {"scrambled", false},
+        {"valid_until", valid_until}});
+  }
+}
+
+
+bool PamHandshake::Conversation::isDirty() const
+{
+  return is_dirty;
+}
+
+std::string PamHandshake::Conversation::getConversationFile() const
+{
+  char *envVar = getRodsEnvAuthFileName();
+  if(envVar && *envVar != '\0')
+  {
+    return std::string(envVar);
+  }
+  else
+  {
+    return std::string(getenv( "HOME" )) + "/.irods/.irodsA.json";
+  }
+}
+
+/////////////////////////////////////////////////////////////
+//
+// Message
+//
+/////////////////////////////////////////////////////////////
 inline static PamHandshake::Message::State parseState(const std::string & s)
 {
   using State = PamHandshake::Message::State;
@@ -88,16 +240,18 @@ PamHandshake::Message::Message(const std::string & msg)
   }
   state = ::parseState(itr->second);
   itr = kvp.find("MESSAGE");
+  answer_mode = ResponseMode::User;
   if(itr != kvp.end())
   {
     message = itr->second;
   }
-  if(message.empty() || message[0] != '{')
+  if(message.empty())
   {
-    // simple case: message is a simple string
-    has_echo = true;
-    update_key = message;
-    answer_mode = AnswerMode::Always;
+    key = "null"_json;
+  }
+  else if(message[0] != '{')
+  {
+    key = message;
   }
   else
   {
@@ -105,50 +259,314 @@ PamHandshake::Message::Message(const std::string & msg)
   }
 }
 
+bool PamHandshake::Message::needUpdateInput(const nlohmann::json & j,
+                                            const std::string & k,
+                                            const std::string & a) const
+{
+  if(valid_until.is_null())
+  {
+    if(j.contains(k) &&
+       j[k].is_object() &&
+       j[k].contains("value") &&
+       j[k]["value"].get<std::string>() == a)
+    {
+      return false;
+    }
+    else
+    {
+      return true;
+    }
+  }
+  else
+  {
+    if(j.contains(k) &&
+       j[k].is_object() &&
+       j[k].contains("value") &&
+       j[k]["value"].get<std::string>() == a &&
+       j[k].contains("valid_until") &&
+       j[k]["valid_until"].get<std::string>() == valid_until.get<std::string>())
+    {
+      return false;
+    }
+    else
+    {
+      return true;
+    }
+  }
+}
+
+std::string PamHandshake::Message::input(Conversation & c,
+                                         bool do_echo,
+                                         std::istream & ist,
+                                         std::ostream & ost) const
+{
+  std::string ret;
+  bool is_dirty;
+  std::tie(is_dirty, ret) = input(c.j, do_echo, ist, ost);
+  c.is_dirty |= is_dirty;
+  return ret;
+}
+std::string PamHandshake::Message::input_password(Conversation & c,
+                                                  bool do_echo,
+                                                  std::istream & ist,
+                                                  std::ostream & ost) const
+{
+  std::string ret;
+  bool is_dirty;
+  std::tie(is_dirty, ret) = input_password(c.j, do_echo, ist, ost);
+  c.is_dirty |= is_dirty;
+  return ret;
+}
+
+std::tuple<bool, std::string> PamHandshake::Message::input(nlohmann::json & j,
+                                                           bool do_echo,
+                                                           std::istream & ist,
+                                                           std::ostream & ost) const
+{
+  std::string answer;
+  auto default_answer = std::make_pair<bool, std::string>(false, "");
+  if(key.is_string())
+  {
+    default_answer = extractDefaultValue(key.get<std::string>(), j);
+  }
+  if(answer_mode == ResponseMode::Entry)
+  {
+    // never ask user for input
+    // get answer from json or return empty
+    if(default_answer.first)
+    {
+      return std::make_tuple(false, default_answer.second);
+    }
+    else
+    {
+      return std::make_tuple(false, answer);
+    }
+  }
+  else
+  {
+    if(!default_answer.first || do_echo)
+    {
+      ost << message;
+      if(default_answer.first)
+      {
+        ost << "[" << default_answer.second << "]";
+      }
+      std::getline(ist, answer);
+    }
+    if(default_answer.first && answer.empty())
+    {
+      answer = default_answer.second;
+    }
+    if(key.is_string())
+    {
+      std::string k(key.get<std::string>());
+      if(needUpdateInput(j, k, answer))
+      {
+        if(valid_until.is_null())
+        {
+          j[k] = {{"value", answer},
+                  {"scrambled", false}};
+        }
+        else
+        {
+          j[k] = {{"value", answer},
+                  {"scrambled", false},
+                  {"valid_until", valid_until.get<std::string>()}};
+        }
+        return std::make_tuple(true, answer);
+      }
+    }
+    return std::make_tuple(false, answer);
+  }
+}
+
+std::tuple<bool, std::string> PamHandshake::Message::input_password(nlohmann::json & j,
+                                                                    bool do_echo,
+                                                                    std::istream & ist,
+                                                                    std::ostream & ost) const
+{
+  std::string answer;
+  auto default_answer = std::make_pair<bool, std::string>(false, "");
+  if(key.is_string())
+  {
+    default_answer = extractDefaultValue(key.get<std::string>(), j);
+  }
+  if(answer_mode == ResponseMode::Entry)
+  {
+    // never ask user for input
+    // get answer from json or return empty string
+    if(default_answer.first)
+    {
+      return std::make_tuple(false, default_answer.second);
+    }
+    else
+    {
+      return std::make_tuple(false, answer);
+    }
+  }
+  else
+  {
+    if(!default_answer.first || do_echo)
+    {
+      // either answer not been defined or do_echo is true
+      ost << message;
+      if(default_answer.first)
+      {
+        ost << "[****]";
+      }
+#ifdef WIN32
+      HANDLE hStdin = GetStdHandle( STD_INPUT_HANDLE );
+      DWORD mode;
+      GetConsoleMode( hStdin, &mode );
+      DWORD lastMode = mode;
+      mode &= ~ENABLE_ECHO_INPUT;
+      BOOL error = !SetConsoleMode( hStdin, mode );
+      int errsv = -1;
+#else
+      struct termios tty;
+      tcgetattr( STDIN_FILENO, &tty );
+      tcflag_t oldflag = tty.c_lflag;
+      tty.c_lflag &= ~ECHO;
+      int error = tcsetattr( STDIN_FILENO, TCSANOW, &tty );
+      int errsv = errno;
+      if(error)
+      {
+        printf( "WARNING: Error %d disabling echo mode. Password will be displayed in plaintext.", errsv );
+      }
+#endif
+      std::getline(ist, answer);
+#ifdef WIN32
+      if (!SetConsoleMode(hStdin, lastMode))
+      {
+        printf( "Error reinstating echo mode." );
+      }
+#else
+      tty.c_lflag = oldflag;
+      if ( tcsetattr( STDIN_FILENO, TCSANOW, &tty ) )
+      {
+        printf( "Error reinstating echo mode." );
+      }
+#endif
+      ost << std::endl << std::flush;
+    }
+    if(default_answer.first && answer.empty())
+    {
+      answer = default_answer.second;
+    }
+    if(answer.size() > MAX_PASSWORD_LEN)
+    {
+      answer.erase(MAX_PASSWORD_LEN);
+    }
+    if(key.is_string())
+    {
+      char * pw = new char[answer.size() + 10];
+      obfEncodeByKey(answer.c_str(),
+                     OBF_KEY,
+                     pw);
+      std::string k(key.get<std::string>());
+      std::string enc_answer(pw);
+      delete [] pw;
+      if(needUpdateInput(j, k, enc_answer))
+      {
+        if(valid_until.is_null())
+        {
+          j[k] = {{"value", enc_answer},
+                  {"scrambled", true}};
+          return std::make_tuple(true, answer);
+        }
+        else
+        {
+          j[k] = {{"value", enc_answer},
+                  {"scrambled", true},
+                  {"valid_until", valid_until.get<std::string>()}};
+          return std::make_tuple(true, answer);
+        }
+      }
+    }
+    return std::make_tuple(false, answer);
+  }
+}
+
+bool PamHandshake::Message::applyPatch(Conversation & c) const
+{
+  bool ret = applyPatch(c.j);
+  c.is_dirty |= ret;
+  return ret;
+}
+
+bool PamHandshake::Message::applyPatch(nlohmann::json & j) const
+{
+  if(patch.is_null())
+  {
+    return false;
+  }
+  else if(patch.is_object())
+  {
+    bool ret = false;
+    for(auto item : patch.items())
+    {
+      if(item.value().is_null())
+      {
+        if(j.find(item.key()) != j.end())
+        {
+          j.erase(item.key());
+          ret = true;
+        }
+      }
+      else
+      {
+        j.merge_patch(nlohmann::json{{item.key(), item.value()}});
+        ret = true;
+      }
+    }
+    return ret;
+  }
+  else
+  {
+    throw InvalidKeyError(std::string("expected object:") + patch.dump());
+  }
+}
+
+
 void PamHandshake::Message::parseJson()
 {
   auto obj = nlohmann::json::parse(message);
   message = "";
-  answer_mode = AnswerMode::Always;
+  answer_mode = ResponseMode::User;
   for(auto item : obj.items() )
   {
-    const std::string & key(item.key());
-    if(key == "echo")
+    const std::string & k(item.key());
+    if(k == "echo")
     {
       message = item.value().get<std::string>();
-      has_echo = true;
     }
-    else if(key == "patch")
+    else if(k == "patch")
     {
-      cookies = item.value();
+      patch = item.value();
     }
-    else if(key == "ask")
+    else if(k == "ask")
     {
       std::string ask(item.value().get<std::string>());
-      if(ask == "always")
+      if(ask == "user")
       {
-        answer_mode = AnswerMode::Always;
+        answer_mode = ResponseMode::User;
       }
-      else if(ask == "never")
+      else if(ask == "entry")
       {
-        answer_mode = AnswerMode::Never;
-      }
-      else if(ask == "when invalid")
-      {
-        answer_mode = AnswerMode::WhenInvalid;
+        answer_mode = ResponseMode::Entry;
       }
       else
       {
         throw InvalidKeyError(ask);
       }
     }
-    else if(key == "update")
+    else if(k == "key")
     {
-      update_key = item.value().get<std::string>();
+      key = item.value();
     }
-    else if(key == "valid_until")
+    else if(k == "valid_until")
     {
-      //@todo
+      valid_until = item.value();
     }
     else
     {
@@ -157,24 +575,24 @@ void PamHandshake::Message::parseJson()
   }
 }
 
-static std::string extract_default_value(const std::string & message,
-                                         nlohmann::json & j)
+std::pair<bool, std::string> PamHandshake::Message::extractDefaultValue(const std::string & key,
+                                                                        const nlohmann::json & j) const
 {
-  if(j.contains(message))
+  if(j.contains(key))
   {
-    if(j[message].is_string())
+    if(j[key].is_string())
     {
-      return j[message].get<std::string>();
+      return std::make_pair(true, j[key].get<std::string>());
     }
-    else if(j[message].is_object() &&
-            j[message].contains("answer") &&
-            j[message]["answer"].is_string())
+    else if(j[key].is_object() &&
+            j[key].contains("value") &&
+            j[key]["value"].is_string())
     {
-      if(j[message].contains("scrambled") &&
-         j[message]["scrambled"].get<bool>())
+      if(j[key].contains("scrambled") &&
+         j[key]["scrambled"].get<bool>())
       {
         //@todo length check!
-        std::string answer(j[message]["answer"].get<std::string>());
+        std::string answer(j[key]["value"].get<std::string>());
         if(answer.size() > MAX_PASSWORD_LEN + 9)
         {
           throw std::runtime_error("password too long");
@@ -185,209 +603,17 @@ static std::string extract_default_value(const std::string & message,
                        pw);
         std::string ret(pw);
         delete [] pw;
-        return ret;
+        return std::make_pair(true, ret);
       }
       else
       {
-        return j[message]["answer"].get<std::string>();
+        return std::make_pair(true, j[key]["value"].get<std::string>());
       }
     }
-  }
-  return std::string("");
-}
-
-void PamHandshake::update_cookies(nlohmann::json & j,
-                                  const nlohmann::json & cookies)
-{
-  if(cookies.is_object())
-  {
-    for(auto item : cookies.items())
-    {
-      if(item.value().is_null())
-      {
-        j.erase(item.key());
-      }
-      else
-      {
-        j.merge_patch(nlohmann::json{{item.key(), item.value()}});
-      }
-    }
+    return std::make_pair(false, std::string(""));
   }
   else
   {
-    throw InvalidKeyError(std::string("expected object:") + cookies.dump());
+    return std::make_pair(false, std::string(""));
   }
 }
-
-std::string PamHandshake::pam_input(const std::string & message,
-                                    nlohmann::json & j,
-                                    bool do_echo)
-{
-  std::string default_value;
-  try
-  {
-    default_value = extract_default_value(message, j);
-  }
-  catch(const std::exception & ex)
-  {
-  }
-  std::string answer;
-  if(default_value.empty() || do_echo)
-  {
-    std::cout << message;
-    if(!default_value.empty())
-    {
-      std::cout << "[" << default_value << "]";
-    }
-    std::getline(std::cin, answer);
-  }
-  if(answer.empty())
-  {
-    answer = default_value;
-  }
-  j[message] = {{"answer", answer},
-                {"scrambled", false}};
-  return answer;
-}
-
-std::string PamHandshake::pam_input_password(const std::string & message,
-                                             nlohmann::json & j,
-                                             bool do_echo)
-{
-  std::string default_value;
-  try
-  {
-    default_value = extract_default_value(message, j);
-  }
-  catch(const std::exception & ex)
-  {
-  }
-  std::string answer;
-  if(default_value.empty() || do_echo)
-  {
-    std::cout << message;
-    if(!default_value.empty())
-    {
-      std::cout << "[****]";
-    }
-  }
-#ifdef WIN32
-  HANDLE hStdin = GetStdHandle( STD_INPUT_HANDLE );
-  DWORD mode;
-  GetConsoleMode( hStdin, &mode );
-  DWORD lastMode = mode;
-  mode &= ~ENABLE_ECHO_INPUT;
-  BOOL error = !SetConsoleMode( hStdin, mode );
-  int errsv = -1;
-#else
-  struct termios tty;
-  tcgetattr( STDIN_FILENO, &tty );
-  tcflag_t oldflag = tty.c_lflag;
-  tty.c_lflag &= ~ECHO;
-  int error = tcsetattr( STDIN_FILENO, TCSANOW, &tty );
-  int errsv = errno;
-  if(error)
-  {
-    printf( "WARNING: Error %d disabling echo mode. Password will be displayed in plaintext.", errsv );
-  }
-#endif
-  if(default_value.empty() || do_echo)
-  {
-    std::getline(std::cin, answer);
-  }
-#ifdef WIN32
-  if (!SetConsoleMode(hStdin, lastMode))
-  {
-    printf( "Error reinstating echo mode." );
-  }
-#else
-  tty.c_lflag = oldflag;
-  if ( tcsetattr( STDIN_FILENO, TCSANOW, &tty ) )
-  {
-    printf( "Error reinstating echo mode." );
-  }
-#endif
-  if(default_value.empty() || do_echo)
-  {
-    std::cout << std::endl << std::flush;
-  }
-  if(answer.empty())
-  {
-    answer = default_value;
-  }
-  if(answer.size() > MAX_PASSWORD_LEN)
-  {
-    answer.erase(MAX_PASSWORD_LEN);
-  }
-  char * pw = new char[answer.size() + 10];
-  obfEncodeByKey(answer.c_str(),
-                 OBF_KEY,
-                 pw);
-  j[message] = {{"answer", std::string(pw)},
-                {"scrambled", true}};
-  delete [] pw;
-  return answer;
-}
-
-std::string PamHandshake::get_conversation_file()
-{
-  char *envVar = getRodsEnvAuthFileName();
-  if(envVar && *envVar != '\0')
-  {
-    return std::string(envVar);
-  }
-  else
-  {
-    return std::string(getenv( "HOME" )) + "/.irods/.irodsA.json";
-  }
-}
-
-void PamHandshake::save_conversation(std::ostream & ost,
-                                     const nlohmann::json & json_conversation)
-{
-  ost << json_conversation;
-}
-
-void PamHandshake::save_conversation(const nlohmann::json & json_conversation, int VERBOSE_LEVEL)
-{
-  std::string file_name(get_conversation_file());
-  PAM_CLIENT_LOG(PAMLOG_INFO, "SAVE conversation: " << file_name);
-  std::ofstream file(file_name.c_str());
-  if (file.is_open())
-  {
-    save_conversation(file, json_conversation);
-    file.close();
-  }
-  else
-  {
-    throw std::runtime_error((std::string("cannot write to  file ") + file_name).c_str());
-  }
-}
-
-nlohmann::json PamHandshake::load_conversation(std::istream & ist)
-{
-  nlohmann::json json_conversation;
-  ist >> json_conversation;
-  return json_conversation;
-}
-
-nlohmann::json PamHandshake::load_conversation(int VERBOSE_LEVEL)
-{
-  nlohmann::json json_conversation;
-  std::string file_name(get_conversation_file());
-  PAM_CLIENT_LOG(PAMLOG_INFO, "LOAD  conversation: " << file_name);
-  std::ifstream file(file_name.c_str());
-  if (file.is_open())
-  {
-    nlohmann::json json_conversation(load_conversation(file));
-    file.close();
-    return json_conversation;
-  }
-  else
-  {
-    return "{}"_json;
-  }
-}
-
-
-  

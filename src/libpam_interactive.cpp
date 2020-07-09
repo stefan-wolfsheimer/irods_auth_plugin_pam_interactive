@@ -51,10 +51,6 @@
 #endif
 #include "pam_interactive_config.h"
 
-
-
-
-
 int get64RandomBytes( char *buf );
 
 const char AUTH_PAM_INTERACTIVE_SCHEME[] = "pam_interactive";
@@ -232,15 +228,15 @@ irods::error pam_auth_client_request(irods::plugin_context& _ctx, rcComm_t* _com
         return ERROR( -1, "failed to enable ssl" );
       }
     }
-    nlohmann::json json_conversation;
+    PamHandshake::Conversation conversation;
     try
     {
-      json_conversation = PamHandshake::load_conversation(VERBOSE_LEVEL);
+      conversation.load(VERBOSE_LEVEL);
     }
     catch(const std::exception & ex)
     {
       PAM_CLIENT_LOG(PAMLOG_INFO, "failed to load conversation file " << ex.what());
-      json_conversation = "{}"_json;
+      conversation.reset();
     }
     std::string session;
     int status = 0;
@@ -254,7 +250,8 @@ irods::error pam_auth_client_request(irods::plugin_context& _ctx, rcComm_t* _com
     {
       authPluginReqInp_t req_in;
       authPluginReqOut_t* req_out = 0;
-      irods::kvp_map_t kvp;
+      //@todo remove variable
+      //irods::kvp_map_t kvp;
       std::string ctx_str = irods::escaped_kvp_string(irods::kvp_map_t{
           {"METHOD", "PUT"},
           {"SESSION", session},
@@ -293,91 +290,64 @@ irods::error pam_auth_client_request(irods::plugin_context& _ctx, rcComm_t* _com
         }
         break;
       }
-      irods::error ret = irods::parse_escaped_kvp_string(std::string(req_out->result_), kvp);
-      if ( !ret.ok() )
+      try
       {
-        PAM_CLIENT_LOG(PAMLOG_INFO, "PARSING FAILED: " << req_out->result_);
-        status = -1;
-        break;
-      }
-      auto itr = kvp.find("CODE");
-      if(itr == kvp.end())
-      {
-        PAM_CLIENT_LOG(PAMLOG_INFO, "HTTP CODE not returned");
-        status = -1;
-        break;
-      }
-      if(itr->second != "200" && itr->second != "401" && itr->second != "202")
-      {
-        PAM_CLIENT_LOG(PAMLOG_INFO, "HTTP CODE " << itr->second);
-        status = -1;
-        break;
-      }
-      auto sitr = kvp.find("STATE");
-      if(sitr == kvp.end())
-      {
-        PAM_CLIENT_LOG(PAMLOG_INFO, "STATE not returned");
-        status = -1;
-        break;
-      }
-      PAM_CLIENT_LOG(PAMLOG_INFO, "STATE:" << sitr->second);
-      auto mitr = kvp.find("MESSAGE");
-      if(sitr->second == "WAITING")
-      {
-        answer = PamHandshake::pam_input(((mitr == kvp.end()) ? std::string("") : mitr->second),
-                                         json_conversation,
-                                         do_echo);
-      }
-      else if(sitr->second == "WAITING_PW")
-      {
-        answer = PamHandshake::pam_input_password(((mitr == kvp.end()) ? std::string("") : mitr->second),
-                                                  json_conversation,
-                                                  do_echo);
-      }
-      else if(sitr->second == "NOT_AUTHENTICATED")
-      {
-        status = 0;
-        active = false;
-        conversation_done = true;
-        authenticated = false;
-      }
-      else if(sitr->second =="STATE_AUTHENTICATED")
-      {
-        status = 0;
-        active = false;
-        conversation_done = true;
-        authenticated = true;
-      }
-      else if(sitr->second == "ERROR")
-      {
-        status = -1;
-        active = false;
-        err_msg = std::string("PAM error: ");
-        if(mitr != kvp.end())
+        PamHandshake::Message msg(std::string(req_out->result_));
+        msg.applyPatch(conversation);
+        switch(msg.getState())
         {
-          err_msg += mitr->second;
-        }
-      }
-      else if(sitr->second == "TIMEOUT")
-      {
-        status = -1;
-        active = false;
-        err_msg = std::string("PAM timeout");
-      }
-      else if(sitr->second == "NEXT")
-      {
-        if(mitr != kvp.end())
-        {
-          if(!mitr->second.empty() && do_echo)
+        case PamHandshake::Message::State::Waiting:
+          PAM_CLIENT_LOG(PAMLOG_DEBUG, "Waiting");
+          answer = msg.input(conversation, do_echo);
+          break;
+        case PamHandshake::Message::State::WaitingPw:
+          PAM_CLIENT_LOG(PAMLOG_DEBUG, "WaitingPw");
+          answer = msg.input_password(conversation, do_echo);
+          break;
+        case PamHandshake::Message::State::NotAuthenticated:
+          PAM_CLIENT_LOG(PAMLOG_DEBUG, "NotAuthenticated");
+          status = 0;
+          active = false;
+          conversation_done = true;
+          authenticated = false;
+          break;
+        case PamHandshake::Message::State::Authenticated:
+          PAM_CLIENT_LOG(PAMLOG_DEBUG, "Authenticated");
+          status = 0;
+          active = false;
+          conversation_done = true;
+          authenticated = true;
+          break;
+        case PamHandshake::Message::State::Error:
+          PAM_CLIENT_LOG(PAMLOG_DEBUG, "Error");
+          status = -1;
+          active = false;
+          err_msg = std::string("PAM error: ") + msg.getMessage();
+          break;
+        case PamHandshake::Message::State::Timeout:
+          PAM_CLIENT_LOG(PAMLOG_DEBUG, "Timeout");
+          status = -1;
+          active = false;
+          err_msg = std::string("PAM timeout");
+          break;
+        case PamHandshake::Message::State::Next:
+          PAM_CLIENT_LOG(PAMLOG_DEBUG, "Next");
+          if(!msg.getMessage().empty() && do_echo)
           {
-            std::cout << mitr->second << std::endl;
+            std::cout << msg.getMessage() << std::endl;
           }
+          break;
+        default:
+          status = -1;
+          err_msg = std::string("invalid state");
+          break;
         }
       }
-      else
+      catch(const std::exception & ex)
       {
+        PAM_CLIENT_LOG(PAMLOG_ERROR, ex.what());
         status = -1;
-        err_msg = std::string("invalid state '") + sitr->second + "'";
+        break;
       }
     }
     if(!err_msg.empty())
@@ -413,12 +383,10 @@ irods::error pam_auth_client_request(irods::plugin_context& _ctx, rcComm_t* _com
         PAM_CLIENT_LOG(PAMLOG_DEBUG, "PAM AUTH CHECK SUCCESS");
         // =-=-=-=-=-=-=-
         // and cache the result in our auth object
-        std::stringstream ss;
-        ss << json_conversation;
-        ptr->request_result(ss.str().c_str());
+        ptr->request_result(conversation.dump().c_str());
         try
         {
-          PamHandshake::save_conversation(json_conversation, VERBOSE_LEVEL);
+          conversation.save(VERBOSE_LEVEL, false);
         }
         catch(const std::exception & ex)
         {
@@ -430,7 +398,6 @@ irods::error pam_auth_client_request(irods::plugin_context& _ctx, rcComm_t* _com
       {
         PAM_CLIENT_LOG(PAMLOG_DEBUG, "PAM AUTH CHECK FAILED");
         return ERROR( PAM_AUTH_PASSWORD_FAILED, "pam auth check failed" );
-
       }
       //free( req_out );
     }
@@ -456,7 +423,18 @@ static std::string serialize_ordered(const nlohmann::json & j)
     {
       ss << ",";
     }
-    ss << nlohmann::json(n) << ":" << j[n]["answer"];
+    if(j[n].is_string())
+    {
+      ss << nlohmann::json(n) << ":" << j[n];
+    }
+    else if(j[n].is_object() && j[n].contains("value"))
+    {
+      ss << nlohmann::json(n) << ":" << j[n]["value"];
+    }
+    else
+    {
+      ss << "null"_json;
+    }
   }
   return ss.str();
 }

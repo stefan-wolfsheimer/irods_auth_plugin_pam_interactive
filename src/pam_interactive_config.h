@@ -5,6 +5,7 @@
 #include "irods_kvp_string_parser.hpp"
 #define PAMLOG_DEBUG 2
 #define PAMLOG_INFO 1
+#define PAMLOG_ERROR 0
 
 #define PAM_CLIENT_LOG(LEVEL, X)                                      \
   {                                                                   \
@@ -52,30 +53,69 @@ namespace PamHandshake
       : MessageError(std::string("invalid key:") + key) {}
   };
 
+  class Conversation
+  {
+  public:
+    Conversation();
+    Conversation(const nlohmann::json & rhs);
+    Conversation(nlohmann::json && rhs);
+    void load(int verbose_level);
+    void load(std::istream & ist);
+    void reset();
+    void save(int VERBOSE_LEVEL, bool force=false);
+    std::string dump() const;
+    std::tuple<bool, std::string> getValue(const std::string & key) const;
+    std::tuple<bool, std::string> getValidUntil(const std::string & key) const;
+    void setValue(const std::string & key,
+                  const std::string & value,
+                  const std::string & valid_until="");
+    bool isDirty() const;
+    std::string getConversationFile() const;
+
+  private:
+    friend class Message;
+    bool is_dirty;
+    nlohmann::json j;
+  };
+
   class Message
   {
   public:
     // message types:
-    // case 1: [^{].*
-    //    display message (update configuration file if state is Waiting or WaitingPw)
-    //    <str> is tranlated to
-    //    {"echo": <str>,
-    //     "ask": "always",
-    //     "update": <str>}
-    // case 2: {"echo": "display message",
-    //          "patch": {"key": {...}, "key": {}},
-    //          "ask": "always",
-    //          "update": "key",
-    //          "valid_until": "yyyy-mm-dd"}
+    // --------------
+    // case 1: {"echo": "msg",
+    //          "ask": "user"}
+    // ask user for input and send answer back to server
+    // don't save user's answer locally
     //
-    // echo: echo message (if in echo mode)
-    // save: patch list of cookies on client side
-    // if state is "Waiting" or "WaitingPw":
-    //    ask: "never" / "always" / "when invalid"
-    //    update: "key" 
-    //        if cookie if user has answered update cookie with that key
-    //    valid_until: "date-time"
-    //        if cookie if user has answered update cookie expiration
+    // case 1b: {"echo": "msg",
+    //           "ask": "user",
+    //           "patch": {"key1": {"value": "v1", "valid_until": "2020-12-31"},
+    //                     "key2": {"value": "v2"}}
+    // same as case 1 and additional saves entries key1 and key2 on client side
+    //
+    // case 2:
+    // {"echo": "msg",
+    //  "ask": "user",
+    //  "key":  "key1"}
+    // ask user for input and send answer back to server
+    // save user's answer locally under key1.
+    // use value of key1 as default answer.
+    //
+    // a string that does not represent a json object is translated to
+    //    {"echo": <str>,
+    //     "ask": "user",
+    //     "key":  <str>}
+    //
+    // case 3: {"echo": "display message",
+    //          "ask": "user",
+    //          "key": "key",
+    //          "valid_until": "yyyy-mm-dd"}
+    // ask user and save data locally under "key" with expiration date
+    //
+    // case 4: {"ask": "entry",
+    //          "key": "key"}
+    // retrieve entry without user interaction
 
     enum class State
     {
@@ -90,11 +130,9 @@ namespace PamHandshake
       Authenticated,
       NotAuthenticated
     };
-    enum class AnswerMode
+    enum class ResponseMode
     {
-      Always,
-      Never,
-      WhenInvalid
+      User, Entry
     };
 
     Message(const std::string & msg);
@@ -109,60 +147,70 @@ namespace PamHandshake
       return message;
     }
 
-    inline const std::string & getUpdateKey() const
+    inline const nlohmann::json & getKey() const
     {
-      return update_key;
+      return key;
     }
 
-    inline bool hasEcho() const
+    inline const nlohmann::json & getValidUntil() const
     {
-      return has_echo;
+      return valid_until;
     }
 
-    inline AnswerMode getAnswerMode() const
+    inline ResponseMode getResponseMode() const
     {
       return answer_mode;
     }
 
-    inline const nlohmann::json & getCookies() const
+    inline const nlohmann::json & getPatch() const
     {
-      return cookies;
+      return patch;
     }
+
+    /**
+     * Update cookies in json configuration
+     *
+     * update / add /delete:
+     * cookies = {key1: {value: <value>, valid_until: <datetime>},
+                  key2: {value: <value>},
+                  key3: null}
+    */
+    bool applyPatch(nlohmann::json & j) const;
+    bool applyPatch(Conversation & c) const;
+
+    /**
+     * Read input from user.
+     */
+    std::tuple<bool, std::string> input(nlohmann::json & j,
+                                        bool do_echo=true,
+                                        std::istream & ist=std::cin,
+                                        std::ostream & ost=std::cout) const;
+    std::string input(Conversation & c,
+                      bool do_echo=true,
+                      std::istream & ist=std::cin,
+                      std::ostream & ost=std::cout) const;
+    std::tuple<bool, std::string> input_password(nlohmann::json & j,
+                                                 bool do_echo=true,
+                                                 std::istream & ist=std::cin,
+                                                 std::ostream & ost=std::cout) const;
+    std::string input_password(Conversation & c,
+                               bool do_echo=true,
+                               std::istream & ist=std::cin,
+                               std::ostream & ost=std::cout) const;
 
   private:
     void parseJson();
+    std::pair<bool, std::string> extractDefaultValue(const std::string & key,
+                                                     const nlohmann::json & j) const;
+    bool needUpdateInput(const nlohmann::json & j,
+                         const std::string & k,
+                         const std::string & a) const;
     irods::kvp_map_t kvp;
     State state;
     std::string message;
-    std::string update_key;
-    AnswerMode answer_mode;
-    bool has_echo;
-    nlohmann::json cookies;
+    nlohmann::json key;
+    nlohmann::json valid_until;
+    ResponseMode answer_mode;
+    nlohmann::json patch;
   };
-  
-  std::string get_conversation_file();
-  /**
-   * Update cookies in json configuration
-   *
-   * update / add /delete:
-   * cookies = {key1: {value: <value>, valid_until: <datetime>},
-                key2: {value: <value>},
-                key3: null}
-   */
-  void update_cookies(nlohmann::json & j,
-                      const nlohmann::json & cookies);
-  std::string pam_input(const std::string & message, nlohmann::json & j, bool do_echo=true);
-  std::string pam_input_password(const std::string & message, nlohmann::json & j, bool do_echo=true);
-
-
-  // save conversation to file / output stream
-  void save_conversation(const nlohmann::json & json_conversation,
-                         int VERBOSE_LEVEL);
-  void save_conversation(std::ostream & ost,
-                         const nlohmann::json & json_conversation);
-
-  // load conversation from file / input stream
-  nlohmann::json load_conversation(int VERBOSE_LEVEL);
-  nlohmann::json load_conversation(std::istream & ist);
-
 }
