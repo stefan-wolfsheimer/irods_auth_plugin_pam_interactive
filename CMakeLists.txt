@@ -58,7 +58,8 @@ find_package(CURL REQUIRED)
 
 set(IRODS_AUTH_PLUGIN_pam_interactive_SOURCES
   ${CMAKE_SOURCE_DIR}/src/libpam_interactive.cpp
-  ${CMAKE_SOURCE_DIR}/src/pam_interactive_config.cpp
+  ${CMAKE_SOURCE_DIR}/src/conversation.cpp
+  ${CMAKE_SOURCE_DIR}/src/message.cpp
   ${CMAKE_SOURCE_DIR}/src/handshake_client.cpp
 )
 
@@ -135,7 +136,8 @@ target_link_libraries(
 add_executable(
   run_test
   run_test.cpp
-  src/pam_interactive_config.cpp
+  src/message.cpp
+  src/conversation.cpp
   )
 
 target_include_directories(

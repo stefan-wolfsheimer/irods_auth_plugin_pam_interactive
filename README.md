@@ -155,7 +155,10 @@ def pam_sm_authenticate(pamh, flags, argv):
         code_msg = pamh.conversation(pamh.Message(pamh.PAM_PROMPT_ECHO_ON, imsg))
         if code_msg.resp == "1234":
             imsg = json.dumps({"echo":
-                               "number of logins: {0}".format(counter)})
+                               "number of logins: {0}".format(counter),
+                               "context": "all"})
+            # alternatives: "context": "iinit" (display message only for iinit command) (default)
+            # alternatives: "context": "icommand" (display message only for other icommands)
             pamh.conversation(pamh.Message(pamh.PAM_TEXT_INFO, imsg))
             # alternatively:
             # pamh.conversation(pamh.Message(pamh.PAM_TEXT_INFO, "number of logins: {0}".format(counter)))

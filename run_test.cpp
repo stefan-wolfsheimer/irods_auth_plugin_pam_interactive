@@ -1,6 +1,7 @@
 #define CATCH_CONFIG_MAIN
 #include <catch.hpp>
-#include "pam_interactive_config.h"
+#include "message.h"
+#include "conversation.h"
 #include "irods_kvp_string_parser.hpp"
 #include <sstream>
 
@@ -49,9 +50,10 @@ TEST_CASE("Simple conversation without echo", "[Message]")
   REQUIRE(m.getKey() == "null"_json);
   REQUIRE(m.getState() == Message::State::Waiting);
   REQUIRE(m.getResponseMode() == Message::ResponseMode::User);
+  REQUIRE(m.getContext() == Message::Context::IInit);
   std::stringstream ist("some_value");
   std::stringstream ost;
-  REQUIRE(m.input(conv, true, ist, ost) == "some_value");
+  REQUIRE(m.input(conv, Message::Context::All, ist, ost) == "some_value");
   REQUIRE_FALSE(conv.isDirty());
   REQUIRE(conv.getValue("hello") == std::make_tuple(false, std::string("")));
 }
@@ -69,9 +71,10 @@ TEST_CASE("Simple conversation with echo", "[Message]")
     REQUIRE(m.getKey().get<std::string>() == "hello");
     REQUIRE(m.getState() == Message::State::Waiting);
     REQUIRE(m.getResponseMode() == Message::ResponseMode::User);
+    REQUIRE(m.getContext() == Message::Context::IInit);
     std::stringstream ist("some_value");
     std::stringstream ost;
-    REQUIRE(m.input(conv, true, ist, ost) == "some_value");
+    REQUIRE(m.input(conv, Message::Context::All, ist, ost) == "some_value");
   }
   {
     REQUIRE(conv.isDirty());
@@ -84,9 +87,10 @@ TEST_CASE("Simple conversation with echo", "[Message]")
     REQUIRE(m.getKey().get<std::string>() == "hello");
     REQUIRE(m.getState() == Message::State::Waiting);
     REQUIRE(m.getResponseMode() == Message::ResponseMode::User);
+    REQUIRE(m.getContext() == Message::Context::IInit);
     std::stringstream ist("some_value2");
     std::stringstream ost;
-    REQUIRE(m.input(conv, true, ist, ost) == "some_value2");
+    REQUIRE(m.input(conv, Message::Context::All, ist, ost) == "some_value2");
   }
   {
     REQUIRE(conv.isDirty());
@@ -103,9 +107,10 @@ TEST_CASE("Simple conversation with echo", "[Message]")
     REQUIRE(m.getKey().get<std::string>() == "hello2");
     REQUIRE(m.getState() == Message::State::Waiting);
     REQUIRE(m.getResponseMode() == Message::ResponseMode::User);
+    REQUIRE(m.getContext() == Message::Context::IInit);
     std::stringstream ist("some_value_for_hello2");
     std::stringstream ost;
-    REQUIRE(m.input(conv, true, ist, ost) == "some_value_for_hello2");
+    REQUIRE(m.input(conv, Message::Context::All, ist, ost) == "some_value_for_hello2");
   }
   {
     REQUIRE(conv.isDirty());
@@ -126,11 +131,12 @@ TEST_CASE("Json message", "[Message]")
   REQUIRE(m.getKey().is_null());
   REQUIRE(m.getState() == Message::State::Waiting);
   REQUIRE(m.getResponseMode() == Message::ResponseMode::Entry);
+  REQUIRE(m.getContext() == Message::Context::IInit);
   REQUIRE(m.getPatch().is_null());
   // user value never ask because Message::ResponseMode::Entry
   std::stringstream ist("some_value2");
   std::stringstream ost;
-  REQUIRE(m.input(conv, true, ist, ost) == "");
+  REQUIRE(m.input(conv, Message::Context::All, ist, ost) == "");
 }
 
 TEST_CASE("Complex message with key", "[Message]")
@@ -146,11 +152,12 @@ TEST_CASE("Complex message with key", "[Message]")
     REQUIRE(m.getKey().get<std::string>() == "field");
     REQUIRE(m.getState() == Message::State::Waiting);
     REQUIRE(m.getResponseMode() == Message::ResponseMode::Entry);
+    REQUIRE(m.getContext() == Message::Context::IInit);
     REQUIRE(m.getPatch().is_null());
     // user value never ask because Message::ResponseMode::Entry
     std::stringstream ist("some_value2");
     std::stringstream ost;
-    REQUIRE(m.input(conv, true, ist, ost) == "");
+    REQUIRE(m.input(conv, Message::Context::All, ist, ost) == "");
     REQUIRE(ost.str() == "");
   }
   REQUIRE_FALSE(conv.isDirty());
@@ -163,11 +170,12 @@ TEST_CASE("Complex message with key", "[Message]")
     REQUIRE(m.getKey().get<std::string>() == "field");
     REQUIRE(m.getState() == Message::State::Waiting);
     REQUIRE(m.getResponseMode() == Message::ResponseMode::Entry);
+    REQUIRE(m.getContext() == Message::Context::IInit);
     REQUIRE(m.getPatch().is_null());
     // user value never ask because Message::ResponseMode::Entry
     std::stringstream ist("some_value2");
     std::stringstream ost;
-    REQUIRE(m.input(conv, true, ist, ost) == "value");
+    REQUIRE(m.input(conv, Message::Context::All, ist, ost) == "value");
     REQUIRE(ost.str() == "");
   }
   REQUIRE_FALSE(conv.isDirty());
@@ -187,11 +195,12 @@ TEST_CASE("Complex message with non-string values", "[Message]")
     REQUIRE(m.getKey().get<std::string>() == p.first);
     REQUIRE(m.getState() == Message::State::Waiting);
     REQUIRE(m.getResponseMode() == Message::ResponseMode::Entry);
+    REQUIRE(m.getContext() == Message::Context::IInit);
     REQUIRE(m.getPatch().is_null());
     // user value never ask because Message::ResponseMode::Entry
     std::stringstream ist;
     std::stringstream ost;
-    REQUIRE(m.input(conv, true, ist, ost) == p.second);
+    REQUIRE(m.input(conv, Message::Context::All, ist, ost) == p.second);
     REQUIRE(ost.str() == "");
   }
 }
@@ -209,6 +218,7 @@ TEST_CASE("Message with patch", "[Message]")
       {"echo", "hello"},
       {"key", "field"},
       {"ask", "entry"},
+      {"context", "all"},
       {"patch",
           nlohmann::json::object({
             {"k1",
@@ -229,6 +239,7 @@ TEST_CASE("Message with patch", "[Message]")
     REQUIRE(m.getKey().get<std::string>() == "field");
     REQUIRE(m.getState() == Message::State::Waiting);
     REQUIRE(m.getResponseMode() == Message::ResponseMode::Entry);
+    REQUIRE(m.getContext() == Message::Context::All);
     REQUIRE_FALSE(m.getPatch().is_null());
     m.applyPatch(conv);
   }

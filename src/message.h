@@ -1,24 +1,72 @@
 #pragma once
 #include <json.hpp>
-#include <iostream>
-#include <stdexcept>
 #include "irods_kvp_string_parser.hpp"
-#define PAMLOG_DEBUG 2
-#define PAMLOG_INFO 1
-#define PAMLOG_ERROR 0
+/**
+   message types:
+   ----------------------------
+   case 1: {"echo": "msg",
+            "context": "iinit"}
+   Used for PAM info messages (where user is not challenged)
 
-#define PAM_CLIENT_LOG(LEVEL, X)                                      \
-  {                                                                   \
-    if(VERBOSE_LEVEL >= LEVEL)                                        \
-    {                                                                 \
-      std::cout << "PAM: " << __FILE__ << ":" << __LINE__ << " ";     \
-      std::cout << X;                                                 \
-      std::cout << std::endl;                                         \
-    }                                                                 \
-  }
+   context is optional:
+   context=="iinit": default, only display message for iinit workflow
+   context=="all": display message in iinit and other icommands
 
+   ----------------------------
+   case 2: {"echo": "msg",
+            "ask": "user",
+            "context": "iinit"}
+   ask user for input and send answer back to server
+   don't save user's answer locally.
+
+   context is optional:
+   context=="iinit": default, only challenge user for iinit workflow
+   context=="all": challenge user for iinit and other icommands
+
+   ----------------------------
+   case 2b: {"echo": "msg",
+             "ask": "user",
+             "context": "iinit",
+             "patch": {"key1": {"value": "v1", "valid_until": "2020-12-31"},
+             "key2": {"value": "v2"}}
+   same as case 1 and additional saves entries key1 and key2 on client side
+   
+   ----------------------------
+   case 3: {"echo": "msg",
+            "ask": "user",
+            "context": "iinit",
+            "key":  "key1"}
+   ask user for input and send answer back to server
+   save user's answer locally under key1.
+   use value of key1 as default answer.
+
+   context is optional:
+   context=="iinit": default, only challenge user for iinit workflow
+   context=="all": challenge user for iinit and other icommands
+
+   a string that does not represent a json object is translated to
+          {"echo": <str>,
+           "ask": "user",
+           "context": "iinit",
+           "key":  <str>}
+   ----------------------------
+   case 3a: {"echo": "display message",
+             "ask": "user",
+             "key": "key",
+             "context": "iinit",
+             "valid_until": "yyyy-mm-dd"}
+   ask user and save data locally under "key" with expiration date
+
+   case 4: {"ask": "entry",
+            "key": "key"}
+   retrieve entry without user interaction
+   retrieve empty value if cookie does not exist.
+
+**/
 namespace PamHandshake
 {
+  class Conversation;
+
   class MessageError : public std::runtime_error
   {
   public:
@@ -53,70 +101,9 @@ namespace PamHandshake
       : MessageError(std::string("invalid key:") + key) {}
   };
 
-  class Conversation
-  {
-  public:
-    Conversation();
-    Conversation(const nlohmann::json & rhs);
-    Conversation(nlohmann::json && rhs);
-    void load(int verbose_level);
-    void load(std::istream & ist);
-    void reset();
-    void save(int VERBOSE_LEVEL, bool force=false);
-    std::string dump() const;
-    std::tuple<bool, std::string> getValue(const std::string & key) const;
-    std::tuple<bool, std::string> getValidUntil(const std::string & key) const;
-    void setValue(const std::string & key,
-                  const std::string & value,
-                  const std::string & valid_until="");
-    bool isDirty() const;
-    std::string getConversationFile() const;
-
-  private:
-    friend class Message;
-    bool is_dirty;
-    nlohmann::json j;
-  };
-
   class Message
   {
   public:
-    // message types:
-    // --------------
-    // case 1: {"echo": "msg",
-    //          "ask": "user"}
-    // ask user for input and send answer back to server
-    // don't save user's answer locally
-    //
-    // case 1b: {"echo": "msg",
-    //           "ask": "user",
-    //           "patch": {"key1": {"value": "v1", "valid_until": "2020-12-31"},
-    //                     "key2": {"value": "v2"}}
-    // same as case 1 and additional saves entries key1 and key2 on client side
-    //
-    // case 2:
-    // {"echo": "msg",
-    //  "ask": "user",
-    //  "key":  "key1"}
-    // ask user for input and send answer back to server
-    // save user's answer locally under key1.
-    // use value of key1 as default answer.
-    //
-    // a string that does not represent a json object is translated to
-    //    {"echo": <str>,
-    //     "ask": "user",
-    //     "key":  <str>}
-    //
-    // case 3: {"echo": "display message",
-    //          "ask": "user",
-    //          "key": "key",
-    //          "valid_until": "yyyy-mm-dd"}
-    // ask user and save data locally under "key" with expiration date
-    //
-    // case 4: {"ask": "entry",
-    //          "key": "key"}
-    // retrieve entry without user interaction
-
     enum class State
     {
       Running,
@@ -130,9 +117,16 @@ namespace PamHandshake
       Authenticated,
       NotAuthenticated
     };
+
+
     enum class ResponseMode
     {
       User, Entry
+    };
+
+    enum class Context
+    {
+      IInit, ICommand, All
     };
 
     Message(const std::string & msg);
@@ -162,6 +156,11 @@ namespace PamHandshake
       return answer_mode;
     }
 
+    inline Context getContext() const
+    {
+      return context;
+    }
+
     inline const nlohmann::json & getPatch() const
     {
       return patch;
@@ -179,24 +178,47 @@ namespace PamHandshake
     bool applyPatch(Conversation & c) const;
 
     /**
+     * return true if current context is compatible with in_context
+     *
+     * in_context | getContext() | value
+     * -----------+--------------|------
+     * IInit      | IInit        | true
+     * ICommand   | IInit        | false
+     * IInit      | ICommand     | false
+     * ICommand   | ICommand     | false
+     * IInit      | All          | true
+     * ICommand   | All          | true
+     * All        | *            | true
+     */
+    bool isInContext(Context in_context=Context::All) const;
+    
+    /**
+     * Display message
+     */
+
+    void echo(Context in_context=Context::All,
+              std::ostream & ost=std::cout) const;
+    /**
      * Read input from user.
      */
     std::tuple<bool, std::string> input(nlohmann::json & j,
-                                        bool do_echo=true,
+                                        Context in_context=Context::All,
                                         std::istream & ist=std::cin,
                                         std::ostream & ost=std::cout) const;
     std::string input(Conversation & c,
-                      bool do_echo=true,
+                      Context in_context=Context::All,
                       std::istream & ist=std::cin,
                       std::ostream & ost=std::cout) const;
     std::tuple<bool, std::string> input_password(nlohmann::json & j,
-                                                 bool do_echo=true,
+                                                 Context in_context=Context::All,
                                                  std::istream & ist=std::cin,
                                                  std::ostream & ost=std::cout) const;
     std::string input_password(Conversation & c,
-                               bool do_echo=true,
+                               Context in_context=Context::All,
                                std::istream & ist=std::cin,
                                std::ostream & ost=std::cout) const;
+
+
 
   private:
     void parseJson();
@@ -211,6 +233,7 @@ namespace PamHandshake
     nlohmann::json key;
     nlohmann::json valid_until;
     ResponseMode answer_mode;
+    Context context;
     nlohmann::json patch;
   };
 }

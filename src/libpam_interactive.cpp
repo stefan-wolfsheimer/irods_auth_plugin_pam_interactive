@@ -49,7 +49,8 @@
 #include <curl/curl.h>
 #include "handshake_client.h"
 #endif
-#include "pam_interactive_config.h"
+#include "message.h"
+#include "conversation.h"
 
 int get64RandomBytes( char *buf );
 
@@ -61,6 +62,19 @@ static bool has_do_echo(const irods::kvp_map_t & kvp)
   auto itr = kvp.find("ECHO");
   return (itr != kvp.end() && itr->second == "true");
 }
+
+static PamHandshake::Message::Context get_message_context(const irods::kvp_map_t & kvp)
+{
+  if (has_do_echo(kvp))
+  {
+    return PamHandshake::Message::Context::IInit;
+  }
+  else
+  {
+    return PamHandshake::Message::Context::ICommand;
+  }
+}
+
 
 irods::error pam_auth_client_start(irods::plugin_context& _ctx,
                                    rcComm_t* _comm,
@@ -218,7 +232,7 @@ irods::error pam_auth_client_request(irods::plugin_context& _ctx, rcComm_t* _com
     {
       return ret;
     }
-    bool do_echo = has_do_echo(kvp);
+    PamHandshake::Message::Context message_context = get_message_context(kvp);
     if ( !using_ssl )
     {
       PAM_CLIENT_LOG(PAMLOG_DEBUG, "sslStart");
@@ -298,11 +312,11 @@ irods::error pam_auth_client_request(irods::plugin_context& _ctx, rcComm_t* _com
         {
         case PamHandshake::Message::State::Waiting:
           PAM_CLIENT_LOG(PAMLOG_DEBUG, "Waiting");
-          answer = msg.input(conversation, do_echo);
+          answer = msg.input(conversation, message_context);
           break;
         case PamHandshake::Message::State::WaitingPw:
           PAM_CLIENT_LOG(PAMLOG_DEBUG, "WaitingPw");
-          answer = msg.input_password(conversation, do_echo);
+          answer = msg.input_password(conversation, message_context);
           break;
         case PamHandshake::Message::State::NotAuthenticated:
           PAM_CLIENT_LOG(PAMLOG_DEBUG, "NotAuthenticated");
@@ -332,10 +346,7 @@ irods::error pam_auth_client_request(irods::plugin_context& _ctx, rcComm_t* _com
           break;
         case PamHandshake::Message::State::Next:
           PAM_CLIENT_LOG(PAMLOG_DEBUG, "Next");
-          if(!msg.getMessage().empty() && do_echo)
-          {
-            std::cout << msg.getMessage() << std::endl;
-          }
+          msg.echo(message_context);
           break;
         default:
           status = -1;
