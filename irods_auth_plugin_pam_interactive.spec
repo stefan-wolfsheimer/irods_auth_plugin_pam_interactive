@@ -21,10 +21,13 @@ make
 mkdir -p %{buildroot}/usr/lib/irods/plugins/auth/
 install -m 755 libpam_interactive_client.so %{buildroot}/usr/lib/irods/plugins/auth/libpam_interactive_client.so
 install -m 755 libpam_interactive_server.so %{buildroot}/usr/lib/irods/plugins/auth/libpam_interactive_server.so
+install -m 755 pam_handshake_auth_check %{buildroot}/usr/sbin/pam_handshake_auth_check
+
 
 %files
 /usr/lib/irods/plugins/auth/libpam_interactive_client.so
 /usr/lib/irods/plugins/auth/libpam_interactive_server.so
+/usr/sbin/pam_handshake_auth_check
 
 %post
 

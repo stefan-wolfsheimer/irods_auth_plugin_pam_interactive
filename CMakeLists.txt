@@ -54,13 +54,27 @@ include_directories(
 link_libraries(c++abi)
 
 find_package(OpenSSL REQUIRED)
-find_package(CURL REQUIRED)
+# find_package(CURL REQUIRED)
+find_package(PAM REQUIRED)
+
+if (NOT PAM_LIBRARY)
+  find_library(PAM_LIBRARY pam)
+  if (PAM_LIBRARY)
+    message(STATUS "Found pam: ${PAM_LIBRARY}")
+  else()
+    message(FATAL_ERROR "pam library not found")
+  endif()
+endif()
 
 set(IRODS_AUTH_PLUGIN_pam_interactive_SOURCES
   ${CMAKE_SOURCE_DIR}/src/libpam_interactive.cpp
   ${CMAKE_SOURCE_DIR}/src/conversation.cpp
   ${CMAKE_SOURCE_DIR}/src/message.cpp
   ${CMAKE_SOURCE_DIR}/src/handshake_client.cpp
+
+  ${CMAKE_SOURCE_DIR}/src/pam_handshake/session.cpp
+  ${CMAKE_SOURCE_DIR}/src/pam_handshake/pam_conversation.cpp
+  ${CMAKE_SOURCE_DIR}/src/pam_handshake/server.cpp
 )
 
 
@@ -69,9 +83,11 @@ set(
   client
   server
   )
+
 set(
   IRODS_PLUGIN_COMPILE_DEFINITIONS_client
   )
+
 set(
   IRODS_PLUGIN_COMPILE_DEFINITIONS_server
   RODS_SERVER
@@ -129,15 +145,42 @@ endforeach()
 target_link_libraries(
   pam_interactive_server
   PRIVATE
-  ${CURL_LIBRARIES}
+  ${PAM_LIBRARY}
 )
+
+# auth check executable
+add_executable(
+  pam_handshake_auth_check
+  src/pam_handshake/auth_check_main.cpp
+  src/pam_handshake/pam_conversation.cpp
+)
+
+set_property(
+  TARGET
+  pam_handshake_auth_check
+  PROPERTY
+  CXX_STANDARD
+  14
+)
+
+target_link_libraries(
+  pam_handshake_auth_check
+  PRIVATE
+  ${IRODS_EXTERNALS_FULLPATH_CLANG_RUNTIME}/lib/libc++.so.1
+  /usr/lib/libirods_common.so
+  ${PAM_LIBRARY}
+)
+
 
 # unit test
 add_executable(
   run_test
-  run_test.cpp
+  test/run_test.cpp
+  test/test_pam.cpp
+  test/test_message.cpp
   src/message.cpp
   src/conversation.cpp
+  src/pam_handshake/pam_conversation.cpp
   )
 
 target_include_directories(
@@ -160,4 +203,5 @@ set_property(
 target_link_libraries(run_test
   ${IRODS_EXTERNALS_FULLPATH_CLANG_RUNTIME}/lib/libc++.so.1
   /usr/lib/libirods_common.so
+  ${PAM_LIBRARY}
 )

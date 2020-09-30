@@ -1,4 +1,3 @@
-
 // =-=-=-=-=-=-=-
 // irods includes
 #define USE_SSL 1
@@ -46,8 +45,8 @@
 
 
 #ifdef RODS_SERVER
-#include <curl/curl.h>
 #include "handshake_client.h"
+#include "pam_handshake/server.h"
 #endif
 #include "message.h"
 #include "conversation.h"
@@ -940,7 +939,7 @@ irods::auth* plugin_factory(
     const std::string& _inst_name,
     const std::string& _context ) {
 #ifdef RODS_SERVER
-    curl_global_init(CURL_GLOBAL_ALL);
+  //std::cout << "plugin_factory XXXXXXXXXXXXXXXXX " << getpid() << std::endl;
 #endif
     // =-=-=-=-=-=-=-
     // create an auth object

@@ -1,9 +1,7 @@
 #pragma once
 #include <string>
 
-
 #ifdef RODS_SERVER
-#include <curl/curl.h>
 #include <tuple>
 #endif
 
@@ -31,26 +29,6 @@ namespace PamHandshake
                            const std::string & session,
                            bool verbose);
 
-  class ReadDataBuffer
-  {
-  public:
-    CURLcode init(void *curl) const;
-    const std::string & getResult() const;
-  private:
-    static std::size_t write(void *contents, size_t size, size_t nmemb, void *data);
-    std::string result;
-  };
 
-  class ReadWriteDataBuffer : public ReadDataBuffer
-  {
-  public:
-    ReadWriteDataBuffer(const std::string & _buffer);
-    CURLcode init(void *curl) const;
-  private:
-    static std::size_t read(void *ptr, size_t size, size_t nmemb, void *data);
-    std::string buffer;
-    std::string content_length_header;
-    size_t uploaded;
-  };
 #endif
 }
