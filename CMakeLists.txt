@@ -67,6 +67,8 @@ if (NOT PAM_LIBRARY)
   endif()
 endif()
 
+add_subdirectory (whereami)
+
 set(IRODS_AUTH_PLUGIN_pam_interactive_SOURCES
   ${CMAKE_SOURCE_DIR}/src/libpam_interactive.cpp
   ${CMAKE_SOURCE_DIR}/src/conversation.cpp
@@ -76,7 +78,7 @@ set(IRODS_AUTH_PLUGIN_pam_interactive_SOURCES
   ${CMAKE_SOURCE_DIR}/src/pam_handshake/session.cpp
   ${CMAKE_SOURCE_DIR}/src/pam_handshake/pam_conversation.cpp
   ${CMAKE_SOURCE_DIR}/src/pam_handshake/server.cpp
-)
+  )
 
 
 set(
@@ -147,7 +149,8 @@ target_link_libraries(
   pam_interactive_server
   PRIVATE
   ${PAM_LIBRARY}
-)
+  WhereAmI
+  )
 
 # auth check executable
 add_executable(
@@ -176,12 +179,13 @@ target_link_libraries(
 # unit test
 add_executable(
   run_test
-  test/run_test.cpp
-  test/test_pam.cpp
-  test/test_message.cpp
-  src/message.cpp
-  src/conversation.cpp
-  src/pam_handshake/pam_conversation.cpp
+  ${CMAKE_SOURCE_DIR}/test/run_test.cpp
+  ${CMAKE_SOURCE_DIR}/test/test_util.cpp
+  ${CMAKE_SOURCE_DIR}/test/test_pam.cpp
+  ${CMAKE_SOURCE_DIR}/test/test_message.cpp
+  ${CMAKE_SOURCE_DIR}/src/message.cpp
+  ${CMAKE_SOURCE_DIR}/src/conversation.cpp
+  ${CMAKE_SOURCE_DIR}/src/pam_handshake/pam_conversation.cpp
   )
 
 target_include_directories(
@@ -205,4 +209,5 @@ target_link_libraries(run_test
   ${IRODS_EXTERNALS_FULLPATH_CLANG_RUNTIME}/lib/libc++.so.1
   /usr/lib/libirods_common.so
   ${PAM_LIBRARY}
+  WhereAmI
 )
