@@ -57,8 +57,7 @@ yum update irods-icommands
 6. Install additional packages
 
 ```
-yum install python-pam-module \
-            pam-handshake
+yum install python-pam-module
 ```
 
 install module (with workaround):
