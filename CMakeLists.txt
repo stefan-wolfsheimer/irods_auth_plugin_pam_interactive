@@ -1,4 +1,5 @@
 cmake_minimum_required(VERSION 3.5.0 FATAL_ERROR)
+list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_LIST_DIR}/cmake/modules)
 
 if (NOT IRODS_EXTERNALS_PACKAGE_ROOT)
   set(IRODS_EXTERNALS_PACKAGE_ROOT "/opt/irods-externals" CACHE STRING "Choose the location of iRODS external packages." FORCE)
@@ -44,7 +45,7 @@ add_compile_options(-Wextra)
 add_compile_options(-Werror)
 add_compile_options(-Wno-unused-parameter)
 add_compile_options(-Wno-unused-function)
-
+add_compile_options(-fPIC)
 
 include_directories(
   ${IRODS_EXTERNALS_FULLPATH_CLANG}/include/c++/v1
@@ -54,14 +55,27 @@ include_directories(
 link_libraries(c++abi)
 
 find_package(OpenSSL REQUIRED)
-find_package(CURL REQUIRED)
+# find_package(CURL REQUIRED)
+find_package(PAM REQUIRED)
+
+if (NOT PAM_LIBRARY)
+  find_library(PAM_LIBRARY pam)
+  if (PAM_LIBRARY)
+    message(STATUS "Found pam: ${PAM_LIBRARY}")
+  else()
+    message(FATAL_ERROR "pam library not found")
+  endif()
+endif()
+
+add_subdirectory (whereami)
 
 set(IRODS_AUTH_PLUGIN_pam_interactive_SOURCES
   ${CMAKE_SOURCE_DIR}/src/libpam_interactive.cpp
   ${CMAKE_SOURCE_DIR}/src/conversation.cpp
   ${CMAKE_SOURCE_DIR}/src/message.cpp
-  ${CMAKE_SOURCE_DIR}/src/handshake_client.cpp
-)
+  ${CMAKE_SOURCE_DIR}/src/pam_handshake/handshake_session.cpp
+  ${CMAKE_SOURCE_DIR}/src/pam_handshake/pam_conversation.cpp
+  )
 
 
 set(
@@ -69,9 +83,11 @@ set(
   client
   server
   )
+
 set(
   IRODS_PLUGIN_COMPILE_DEFINITIONS_client
   )
+
 set(
   IRODS_PLUGIN_COMPILE_DEFINITIONS_server
   RODS_SERVER
@@ -129,15 +145,50 @@ endforeach()
 target_link_libraries(
   pam_interactive_server
   PRIVATE
-  ${CURL_LIBRARIES}
+  ${PAM_LIBRARY}
+  WhereAmI
+  )
+
+target_link_libraries(
+  pam_interactive_client
+  PRIVATE
+  WhereAmI
+  )
+
+# auth check executable
+add_executable(
+  pam_handshake_auth_check
+  src/pam_handshake/auth_check_main.cpp
+  src/pam_handshake/pam_conversation.cpp
 )
+
+set_property(
+  TARGET
+  pam_handshake_auth_check
+  PROPERTY
+  CXX_STANDARD
+  14
+)
+
+target_link_libraries(
+  pam_handshake_auth_check
+  PRIVATE
+  ${IRODS_EXTERNALS_FULLPATH_CLANG_RUNTIME}/lib/libc++.so.1
+  /usr/lib/libirods_common.so
+  ${PAM_LIBRARY}
+)
+
 
 # unit test
 add_executable(
   run_test
-  run_test.cpp
-  src/message.cpp
-  src/conversation.cpp
+  ${CMAKE_SOURCE_DIR}/test/run_test.cpp
+  ${CMAKE_SOURCE_DIR}/test/test_util.cpp
+  ${CMAKE_SOURCE_DIR}/test/test_pam.cpp
+  ${CMAKE_SOURCE_DIR}/test/test_message.cpp
+  ${CMAKE_SOURCE_DIR}/src/message.cpp
+  ${CMAKE_SOURCE_DIR}/src/conversation.cpp
+  ${CMAKE_SOURCE_DIR}/src/pam_handshake/pam_conversation.cpp
   )
 
 target_include_directories(
@@ -160,4 +211,6 @@ set_property(
 target_link_libraries(run_test
   ${IRODS_EXTERNALS_FULLPATH_CLANG_RUNTIME}/lib/libc++.so.1
   /usr/lib/libirods_common.so
+  ${PAM_LIBRARY}
+  WhereAmI
 )
