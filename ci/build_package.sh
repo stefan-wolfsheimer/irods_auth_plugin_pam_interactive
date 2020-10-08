@@ -16,6 +16,7 @@ set -x
 
 docker run --name ${CONTAINER_NAME} -u rpmbuild -v$( pwd ):/build \
        --env IRODS_VERSION=${IRODS_VERSION}\
+       --env QA_RPATHS=$[ 0x0001|0x0010 ]\
        --entrypoint "" ${IMAGE} \
        /home/rpmbuild/build_rpm.sh \
        --irods-version ${IRODS_VERSION} \
