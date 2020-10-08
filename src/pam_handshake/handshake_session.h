@@ -4,6 +4,7 @@
 #include <condition_variable>
 #include <thread>
 #include <ctime>
+#include <string>
 
 namespace PamHandshake
 {
