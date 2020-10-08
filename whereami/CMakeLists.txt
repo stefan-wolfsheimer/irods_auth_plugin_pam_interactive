@@ -12,5 +12,6 @@ add_library( WhereAmI
   )
 
 remove_flag_from_target(WhereAmI -std=c++17)
+remove_flag_from_target(WhereAmI -std=c++14)
 
 
