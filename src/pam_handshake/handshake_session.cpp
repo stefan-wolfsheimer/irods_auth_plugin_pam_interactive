@@ -1,5 +1,4 @@
-#include "session.h"
-#include "server.h"
+#include "handshake_session.h"
 #include "pam_conversation.h"
 #include <functional>
 #include <iostream>
@@ -9,14 +8,60 @@
 
 using namespace PamHandshake;
 
-Session::Session(Server * _server)
-  : server(_server),
-    verbose(_server->isVerbose()),
+Session::Session(const std::string & _pam_stack_name,
+                 const std::string & _conversation_program,
+                 bool _verbose)
+  : pam_stack_name(_pam_stack_name),
+    conversation_program(_conversation_program),
+    verbose(_verbose),
     nextMessage(std::make_pair(State::Running, "")),
     lastTime(std::time(nullptr)),
     t(std::bind(&Session::worker, this))
 {
 }
+
+std::shared_ptr<Session> Session::singletonOp(bool create,
+                                              const std::string & pam_stack_name,
+                                              const std::string & conversation_program,
+                                              std::size_t session_timeout, // seconds
+                                              bool _verbose)
+{
+  static std::mutex gmutex;
+  static std::shared_ptr<Session> instance;
+  std::lock_guard<std::mutex> guard(gmutex);
+  if(create)
+  {
+    if(!instance)
+    {
+      instance = std::make_shared<Session>(pam_stack_name,
+                                           conversation_program,
+                                           _verbose);
+    }
+  }
+  else
+  {
+    instance.reset();
+  }
+  return instance;
+}
+
+std::shared_ptr<Session> Session::getSingleton(const std::string & pam_stack_name,
+                                               const std::string & conversation_program,
+                                               std::size_t session_timeout, // seconds
+                                               bool _verbose)
+{
+  return Session::singletonOp(true,
+                              pam_stack_name,
+                              conversation_program,
+                              session_timeout,
+                              _verbose);
+}
+
+void Session::resetSingleton()
+{
+  Session::singletonOp(false, "", "", 0, false);
+}
+
 
 Session::~Session()
 {
@@ -235,16 +280,17 @@ void Session::worker()
   bool err = false;
   try
   {
-    if(server->hasConversationProgram())
+    if(!conversation_program.empty())
     {
-      result = pam_auth_check_wrapper(server->getConversationProgram(),
-                                      server->getPamStackName(),
+      result = pam_auth_check_wrapper(conversation_program,
+                                      pam_stack_name,
                                       *this,
                                       verbose);
+
     }
     else
     {
-      result = pam_auth_check(server->getPamStackName(), *this, verbose);
+      result = pam_auth_check(pam_stack_name, *this, verbose);
     }
   }
   catch(const std::exception & ex) 

@@ -45,26 +45,27 @@
 
 
 #ifdef RODS_SERVER
-#include "handshake_client.h"
-#include "pam_handshake/server.h"
+#include "pam_handshake/handshake_session.h"
 #endif
 #include "message.h"
 #include "conversation.h"
+#include "../whereami/whereami.hpp"
 
 int get64RandomBytes( char *buf );
 
 const char AUTH_PAM_INTERACTIVE_SCHEME[] = "pam_interactive";
 const int VERBOSE_LEVEL = 0;
 
-static bool has_do_echo(const irods::kvp_map_t & kvp)
-{
-  auto itr = kvp.find("ECHO");
-  return (itr != kvp.end() && itr->second == "true");
-}
+#ifdef RODS_SERVER
+const char PAM_STACK_NAME[] = "irods";
+const char PAM_CHECKER[] = "/usr/sbin/pam_handshake_auth_check";
+const int SESSION_TIMEOUT = 3600;
+#endif
 
 static PamHandshake::Message::Context get_message_context(const irods::kvp_map_t & kvp)
 {
-  if (has_do_echo(kvp))
+  if (WhereAmI::getExecutableBaseName() == "iinit" ||
+      WhereAmI::getExecutableBaseName() == "iinit.exe")
   {
     return PamHandshake::Message::Context::IInit;
   }
@@ -532,207 +533,193 @@ irods::error pam_auth_client_response(irods::plugin_context& _ctx,
 #ifdef RODS_SERVER
 irods::error pam_auth_agent_request(irods::plugin_context& _ctx )
 {
+  using Session = PamHandshake::Session;
   static const std::string empty_string;
-  bool unixSocket = true;
-  bool verbose = true;
-  long port = 8080;
-  std::string addr = "/var/pam_handshake.socket";
-  int http_code;
-  std::string session;
-    // @Todo
-    // =-=-=-=-=-=-=-
-    // validate incoming parameters
-    if ( !_ctx.valid<irods::generic_auth_object>().ok() )
-    {
-        return ERROR( SYS_INVALID_INPUT_PARAM, "invalid plugin context" );
-    }
+  // @Todo
+  // =-=-=-=-=-=-=-
+  // validate incoming parameters
+  if ( !_ctx.valid<irods::generic_auth_object>().ok() )
+  {
+    return ERROR( SYS_INVALID_INPUT_PARAM, "invalid plugin context" );
+  }
 
+  // =-=-=-=-=-=-=-
+  // get the server host handle
+  rodsServerHost_t* server_host = 0;
+  int status = getAndConnRcatHost(_ctx.comm(),
+                                  MASTER_RCAT,
+                                  ( const char* )_ctx.comm()->clientUser.rodsZone,
+                                  &server_host );
+  if ( status < 0 )
+  {
+    return ERROR( status, "getAndConnRcatHost failed." );
+  }
+  
+  auto ptr = boost::dynamic_pointer_cast <irods::generic_auth_object>(_ctx.fco());
+  std::string context = ptr->context( );
+  // =-=-=-=-=-=-=-
+  // if we are not the catalog server, redirect the call
+  // to there
+  if ( server_host->localFlag != LOCAL_HOST )
+  {
     // =-=-=-=-=-=-=-
-    // get the server host handle
-    rodsServerHost_t* server_host = 0;
-    int status = getAndConnRcatHost(_ctx.comm(),
-                                    MASTER_RCAT,
-                                    ( const char* )_ctx.comm()->clientUser.rodsZone,
-                                    &server_host );
-    if ( status < 0 )
+    // protect the PAM plain text password by
+    // using an SSL connection to the remote ICAT
+    status = sslStart( server_host->conn );
+    if ( status )
     {
-      return ERROR( status, "getAndConnRcatHost failed." );
+      return ERROR( status, "could not establish SSL connection" );
     }
-
-    auto ptr = boost::dynamic_pointer_cast <irods::generic_auth_object>(_ctx.fco());
-    std::string context = ptr->context( );
     // =-=-=-=-=-=-=-
-    // if we are not the catalog server, redirect the call
-    // to there
-    if ( server_host->localFlag != LOCAL_HOST )
+    // manufacture structures for the redirected call
+    authPluginReqOut_t* req_out = 0;
+    authPluginReqInp_t  req_inp;
+    strncpy( req_inp.auth_scheme_,
+             AUTH_PAM_INTERACTIVE_SCHEME,
+             sizeof(AUTH_PAM_INTERACTIVE_SCHEME) + 1 );
+    strncpy( req_inp.context_,
+             context.c_str(),
+             context.size() + 1 );
+    status = rcAuthPluginRequest( server_host->conn,
+                                  &req_inp,
+                                  &req_out );
+    sslEnd( server_host->conn );
+    rcDisconnect( server_host->conn );
+    server_host->conn = NULL;
+    if ( !req_out || status < 0 )
     {
-      // =-=-=-=-=-=-=-
-      // protect the PAM plain text password by
-      // using an SSL connection to the remote ICAT
-      status = sslStart( server_host->conn );
-      if ( status )
-      {
-        return ERROR( status, "could not establish SSL connection" );
-      }
-      // =-=-=-=-=-=-=-
-      // manufacture structures for the redirected call
-      authPluginReqOut_t* req_out = 0;
-      authPluginReqInp_t  req_inp;
-      strncpy( req_inp.auth_scheme_,
-               AUTH_PAM_INTERACTIVE_SCHEME,
-               sizeof(AUTH_PAM_INTERACTIVE_SCHEME) + 1 );
-      strncpy( req_inp.context_,
-               context.c_str(),
-               context.size() + 1 );
-      status = rcAuthPluginRequest( server_host->conn,
-                                    &req_inp,
-                                    &req_out );
-      sslEnd( server_host->conn );
-      rcDisconnect( server_host->conn );
-      server_host->conn = NULL;
-      if ( !req_out || status < 0 )
-      {
-        return ERROR( status, "redirected rcAuthPluginRequest failed." );
-      }
-      else
-      {
-        ptr->request_result( req_out->result_ );
-        if ( _ctx.comm()->auth_scheme != NULL )
-        {
-          free( _ctx.comm()->auth_scheme );
-        }
-        _ctx.comm()->auth_scheme = strdup(AUTH_PAM_INTERACTIVE_SCHEME);
-        return SUCCESS();
-      }
-    } // if !localhost
-    irods::kvp_map_t kvp;
-    irods::error ret = irods::parse_escaped_kvp_string(context, kvp);
-    if ( !ret.ok() )
-    {
-      return PASS( ret );
+      return ERROR( status, "redirected rcAuthPluginRequest failed." );
     }
-    try
+    else
     {
-      auto itr = kvp.find("METHOD");
-      if(itr == kvp.end())
+      ptr->request_result( req_out->result_ );
+      if ( _ctx.comm()->auth_scheme != NULL )
       {
-        return ERROR(SYS_INVALID_INPUT_PARAM, "METHOD key missing");
+        free( _ctx.comm()->auth_scheme );
       }
-      else if(itr->second == "POST")
+      _ctx.comm()->auth_scheme = strdup(AUTH_PAM_INTERACTIVE_SCHEME);
+      return SUCCESS();
+    }
+  } // if !localhost
+  irods::kvp_map_t kvp;
+  irods::error ret = irods::parse_escaped_kvp_string(context, kvp);
+  if ( !ret.ok() )
+  {
+    return PASS( ret );
+  }
+  try
+  {
+    auto itr = kvp.find("METHOD");
+    if(itr == kvp.end())
+    {
+      return ERROR(SYS_INVALID_INPUT_PARAM, "METHOD key missing");
+    }
+    else if(itr->second == "POST")
+    {
+      auto session = Session::getSingleton(PAM_STACK_NAME,
+                                           PAM_CHECKER,
+                                           SESSION_TIMEOUT);
+      
+      ptr->request_result(irods::escaped_kvp_string(irods::kvp_map_t{
+            {"SESSION", ""},
+              {"CODE", "200"}}).c_str());
+      return SUCCESS();
+    }
+    else
+    {
+      if(itr->second == "GET")
       {
-        std::tie(http_code, session) = PamHandshake::open_pam_handshake_session(unixSocket,
-                                                                                addr,
-                                                                                port,
-                                                                                verbose);
+        auto session = Session::getSingleton(PAM_STACK_NAME,
+                                             PAM_CHECKER,
+                                             SESSION_TIMEOUT);
         ptr->request_result(irods::escaped_kvp_string(irods::kvp_map_t{
-              {"SESSION", session},
-              {"CODE", std::to_string(http_code)}}).c_str());
+              {"SESSION", ""},
+              {"CODE", "200"},
+              {"STATE", Session::StateToString(session->getState())},
+              {"MESSAGE", ""}
+            }).c_str());
         return SUCCESS();
       }
-      else
+      else if(itr->second == "PUT")
       {
-        std::string state_str;
-        std::string message;
-        auto sitr = kvp.find("SESSION");
-        if(sitr == kvp.end())
+        auto aitr = kvp.find("ANSWER");
+        const std::string & answer((aitr == kvp.end()) ? empty_string : aitr->second);
+        auto session = Session::getSingleton(PAM_STACK_NAME,
+                                             PAM_CHECKER,
+                                             SESSION_TIMEOUT);
+        auto p = session->pull(answer.c_str(),
+                               answer.size());
+        int http_code = 200;
+        if(p.first == Session::State::NotAuthenticated)
         {
-          return ERROR(SYS_INVALID_INPUT_PARAM, "SESSION key missing");
+          http_code = 401;
         }
-        session = sitr->second;
-        if(itr->second == "GET")
+        else if(p.first == Session::State::Authenticated)
         {
-          std::tie(http_code,
-                   state_str,
-                   message) = PamHandshake::pam_handshake_get(unixSocket,
-                                                              addr,
-                                                              port,
-                                                              session,
-                                                              verbose);
-          ptr->request_result(irods::escaped_kvp_string(irods::kvp_map_t{
-                {"SESSION", session},
-                {"CODE", std::to_string(http_code)},
-                {"STATE", state_str},
-                {"MESSAGE", message}
-              }).c_str());
+          http_code = 202;
+        }
+        else if(p.first == Session::State::Error)
+        {
+          http_code = 500;
+        }
+        if(p.first == Session::State::NotAuthenticated || 
+           p.first == Session::State::Authenticated ||
+           p.first == Session::State::Error ||
+           p.first == Session::State::Timeout)
+        {
+          PamHandshake::Session::resetSingleton();
+        }
+        ptr->request_result(irods::escaped_kvp_string(irods::kvp_map_t{
+              {"SESSION", ""},
+              {"CODE", std::to_string(http_code)},
+              {"STATE", Session::StateToString(p.first)},
+              {"MESSAGE", p.second}
+            }).c_str());
+        if(p.first == Session::State::NotAuthenticated)
+        {
+          return ERROR(PAM_AUTH_PASSWORD_FAILED, "pam auth check failed" );
+        }
+        else if(p.first == Session::State::Authenticated)
+        {
           return SUCCESS();
         }
-        else if(itr->second == "PUT")
+        else if(p.first == Session::State::Error ||
+                p.first == Session::State::Timeout)
         {
-          auto aitr = kvp.find("ANSWER");
-          const std::string & answer((aitr == kvp.end()) ? empty_string : aitr->second);
-          std::tie(http_code,
-                   state_str,
-                   message) = PamHandshake::pam_handshake_put(unixSocket,
-                                                              addr,
-                                                              port,
-                                                              session,
-                                                              answer,
-                                                              verbose);
-          if(state_str == "NOT_AUTHENTICATED" ||
-             state_str == "STATE_AUTHENTICATED" ||
-             state_str == "ERROR" ||
-             state_str == "TIMEOUT")
-          {
-            PamHandshake::pam_handshake_delete(unixSocket,
-                                               addr,
-                                               port,
-                                               session,
-                                               verbose);
-          }
-          ptr->request_result(irods::escaped_kvp_string(irods::kvp_map_t{
-                {"SESSION", session},
-                {"CODE", std::to_string(http_code)},
-                {"STATE", state_str},
-                {"MESSAGE", message}
-              }).c_str());
-          if(state_str == "NOT_AUTHENTICATED")
-          {
-            return ERROR(PAM_AUTH_PASSWORD_FAILED, "pam auth check failed" );
-          }
-          else if(state_str == "STATE_AUTHENTICATED")
-          {
-            return SUCCESS();
-          }
-          else if(state_str == "ERROR" || state_str == "TIMEOUT")
-          {
-            return ERROR( -1,
-                          (std::string("pam aux service failure ") +
-                           state_str +
-                           std::string(" ") +
-                           message).c_str());
-          }
-          else
-          {
-            return SUCCESS();
-          }
-        }
-        else if(itr->second == "DELETE")
-        {
-          http_code = PamHandshake::pam_handshake_delete(unixSocket,
-                                                         addr,
-                                                         port,
-                                                         session,
-                                                         verbose);
-          ptr->request_result(irods::escaped_kvp_string(irods::kvp_map_t{
-                {"SESSION", session},
-                {"CODE", std::to_string(http_code)}}).c_str());
-          return SUCCESS();
+          return ERROR( -1,
+                        (std::string("pam aux service failure ") +
+                         Session::StateToString(p.first) +
+                         std::string(" ") +
+                         p.second).c_str());
         }
         else
         {
-          std::string msg("invalid METHOD '");
-          msg+= itr->second;
-          msg+= "'";
-          return ERROR(SYS_INVALID_INPUT_PARAM, msg.c_str());
+          return SUCCESS();
         }
       }
+      else if(itr->second == "DELETE")
+      {
+        PamHandshake::Session::resetSingleton();
+        ptr->request_result(irods::escaped_kvp_string(irods::kvp_map_t{
+              {"SESSION", ""},
+              {"CODE", std::to_string(200)}}).c_str());
+        return SUCCESS();
+      }
+      else
+      {
+        std::string msg("invalid METHOD '");
+        msg+= itr->second;
+        msg+= "'";
+        return ERROR(SYS_INVALID_INPUT_PARAM, msg.c_str());
+      }
     }
-    catch(const std::exception & ex)
-    {
-      //@todo error handling
-      rodsLog(LOG_ERROR, "open_pam_handshake_session: %s", ex.what());
-      return ERROR( -1, ex.what() );
-    }
+  }
+  catch(const std::exception & ex)
+  {
+    //@todo error handling
+    rodsLog(LOG_ERROR, "open_pam_handshake_session: %s", ex.what());
+    return ERROR( -1, ex.what() );
+  }
 } // pam_auth_agent_request
 #endif
 

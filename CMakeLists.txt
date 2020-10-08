@@ -45,7 +45,7 @@ add_compile_options(-Wextra)
 add_compile_options(-Werror)
 add_compile_options(-Wno-unused-parameter)
 add_compile_options(-Wno-unused-function)
-
+add_compile_options(-fPIC)
 
 include_directories(
   ${IRODS_EXTERNALS_FULLPATH_CLANG}/include/c++/v1
@@ -73,11 +73,8 @@ set(IRODS_AUTH_PLUGIN_pam_interactive_SOURCES
   ${CMAKE_SOURCE_DIR}/src/libpam_interactive.cpp
   ${CMAKE_SOURCE_DIR}/src/conversation.cpp
   ${CMAKE_SOURCE_DIR}/src/message.cpp
-  ${CMAKE_SOURCE_DIR}/src/handshake_client.cpp
-
-  ${CMAKE_SOURCE_DIR}/src/pam_handshake/session.cpp
+  ${CMAKE_SOURCE_DIR}/src/pam_handshake/handshake_session.cpp
   ${CMAKE_SOURCE_DIR}/src/pam_handshake/pam_conversation.cpp
-  ${CMAKE_SOURCE_DIR}/src/pam_handshake/server.cpp
   )
 
 
@@ -149,6 +146,12 @@ target_link_libraries(
   pam_interactive_server
   PRIVATE
   ${PAM_LIBRARY}
+  WhereAmI
+  )
+
+target_link_libraries(
+  pam_interactive_client
+  PRIVATE
   WhereAmI
   )
 
