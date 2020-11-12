@@ -67,6 +67,11 @@ rpm --nodeps -i https://artie.ia.surfsara.nl/artifactory/DMS-RPM-Testing-Public/
 ```
 (this is a workaround for yum install irods_auth_plugin_pam_interactive)
 
+Install patched icommands
+```
+rpm --nodeps -i https://artie.ia.surfsara.nl/artifactory/DMS-RPM-Testing-Public/Centos/7/irods-4.2.8/master/x86_64/Packages/irods-icommands-4.2.8-<LATEST>.x86_64.rpm
+```
+
 ## Usage and configuration
 
 ![Components](doc/Components.png)
@@ -165,7 +170,20 @@ def pam_sm_authenticate(pamh, flags, argv):
     return pamh.PAM_AUTH_ERR
 ```
 
+#### Testing the stack
+```
+/usr/sbin/pam_handshake_auth_check
+```
 
+#### Configure icommands
+
+~/.irods/irods_environment.json
+```
+ ...
+ "irods_authentication_scheme": "pam_interactive"
+ ...
+
+```
 
 
 
